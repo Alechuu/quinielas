@@ -56,33 +56,11 @@ interface QuinielaResponse {
    URLS
 ========================= */
 
-const URL_HOY = "https://www.jugandoonline.com.ar/rHome.aspx";
-const URL_AYER = "https://www.jugandoonline.com.ar/rHome2-Ayer.aspx";
 const URL_NOTITIMBA = "https://notitimba.com/lots/";
 
 /* =========================
    MAPPINGS
 ========================= */
-
-// Maps CSS class in HTML to internal key (for today's page)
-const PROVINCIA_CLASS_MAP: Record<string, ProvinciaKeyInternal> = {
-  Ciudad: "ciudad",
-  ProvBsAs: "provincia",
-  SantaFe: "santa_fe",
-  Cordoba: "cordoba",
-  EntreRios: "entre_rios",
-  Montevideo: "montevideo",
-};
-
-// Maps div ID suffix to internal key (for yesterday's page which uses different structure)
-const PROVINCIA_ID_MAP: Record<string, ProvinciaKeyInternal> = {
-  Ciudad: "ciudad",
-  ProvBsAs: "provincia",
-  SantaFe: "santa_fe",
-  Cordoba: "cordoba",
-  EntreRios: "entre_rios",
-  Montevideo: "montevideo",
-};
 
 // Maps internal key to table key (for provincia)
 const PROVINCIA_TO_TABLE: Record<ProvinciaKeyInternal, ProvinciaKeyTable> = {
@@ -193,28 +171,8 @@ function getDebugNowFromRequest(request: Request): Date | null {
 }
 
 /* =========================
-   FETCH HTML
+   FETCH NOTITIMBA
 ========================= */
-
-async function fetchHTML(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      cache: "no-store",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
-      },
-    });
-
-    return await res.text();
-  } catch (e) {
-    console.error("Fetch error:", url, e);
-    return null;
-  }
-}
 
 interface NotitimbaFetchResult {
   staticHtml: string | null; // Full page HTML (contains historical tables like #Unoct)
@@ -292,77 +250,8 @@ function emptyParsedData(): ParsedData {
   };
 }
 
-// Extract numbers from a container element
-function extractNumbersFromContainer(
-  $: cheerio.CheerioAPI,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  container: any,
-  data: ParsedData,
-  provinciaKey: ProvinciaKeyInternal
-): void {
-  // Find the desktop section which has class "quinielas2021-desktop"
-  const desktopSection = container.find(".quinielas2021-desktop");
-
-  if (desktopSection.length === 0) return;
-
-  // Get all numbers from spans with class "no-enlaces-numeros"
-  const numberSpans = desktopSection.find(".no-enlaces-numeros");
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  numberSpans.each(function (index: number, elem: any) {
-    const text = $(elem).text().trim();
-
-    // Only process valid 4-digit numbers, skip "----" or other placeholders
-    if (/^\d{4}$/.test(text) && index < SORTEO_ORDER.length) {
-      const sorteo = SORTEO_ORDER[index];
-      data[sorteo][provinciaKey] = text;
-    }
-  });
-}
-
-// Parse today's page (uses class-based selectors)
-function parseHoyPage(html: string | null): ParsedData {
-  const data = emptyParsedData();
-
-  if (!html) return data;
-
-  const $ = cheerio.load(html);
-
-  // For each provincia, find its container by class and extract numbers
-  for (const [className, provinciaKey] of Object.entries(PROVINCIA_CLASS_MAP)) {
-    const container = $(`.container.${className}`);
-    if (container.length > 0) {
-      extractNumbersFromContainer($, container, data, provinciaKey);
-    }
-  }
-
-  return data;
-}
-
-// Parse yesterday's page (uses ID-based selectors because all containers have class "Ciudad")
-function parseAyerPage(html: string | null): ParsedData {
-  const data = emptyParsedData();
-
-  if (!html) return data;
-
-  const $ = cheerio.load(html);
-
-  // For each provincia, find its container by ID and extract numbers
-  // IDs are like: MainContent_CabezasAyerCiudadDiv, MainContent_CabezasAyerProvBsAsDiv, etc.
-  for (const [idSuffix, provinciaKey] of Object.entries(PROVINCIA_ID_MAP)) {
-    const containerId = `MainContent_CabezasAyer${idSuffix}Div`;
-    const container = $(`#${containerId}`);
-
-    if (container.length > 0) {
-      extractNumbersFromContainer($, container, data, provinciaKey);
-    }
-  }
-
-  return data;
-}
-
 /* =========================
-   NOTITIMBA FALLBACK PARSER
+   NOTITIMBA PARSER
 ========================= */
 
 function getDateString(date: Date): string {
@@ -395,29 +284,11 @@ function isSorteoPastDeadline(sorteo: SorteoKeyInternal, now: Date): boolean {
   return currentMinutes >= deadlineMinutes;
 }
 
-// Check if a sorteo is missing data for any of the main provinces
-function isSorteoMissingData(
-  data: ParsedData,
-  sorteo: SorteoKeyInternal
-): boolean {
-  const mainProvinces: ProvinciaKeyInternal[] = [
-    "ciudad",
-    "provincia",
-    "santa_fe",
-    "cordoba",
-    "entre_rios",
-  ];
-  return mainProvinces.some((p) => !data[sorteo][p]);
-}
-
 // Parse the notitimba AJAX response — it returns today's results inside
 // <table class="qTbl"> elements. Columns match SORTEO_ORDER:
 // PREVIA, PRIMERO, MATUTINA, VESPERTINA, NOCTURNA.
 // Numbers live in <div class="qTDc">NUMBER</div>; empty cells use class "qTD".
-function parseNotitimbaResponse(
-  html: string | null,
-  sorteosNeeded: SorteoKeyInternal[]
-): ParsedData {
+function parseNotitimbaResponse(html: string | null): ParsedData {
   const data = emptyParsedData();
   if (!html) return data;
 
@@ -439,7 +310,6 @@ function parseNotitimbaResponse(
           .each((colIndex, cell) => {
             if (colIndex >= SORTEO_ORDER.length) return;
             const sorteo = SORTEO_ORDER[colIndex];
-            if (!sorteosNeeded.includes(sorteo)) return;
 
             const numDiv = $(cell).find(".qTDc");
             if (numDiv.length > 0) {
@@ -495,25 +365,6 @@ function parseNotitimbaNocturnaAyer(
   });
 
   return result as Record<ProvinciaKeyInternal, string | undefined>;
-}
-
-// Merge fallback data into primary data — only fills in missing values
-function mergeParsedData(
-  primary: ParsedData,
-  fallback: ParsedData
-): ParsedData {
-  const merged = emptyParsedData();
-
-  for (const sorteo of SORTEO_ORDER) {
-    merged[sorteo] = { ...primary[sorteo] };
-    for (const [provincia, value] of Object.entries(fallback[sorteo])) {
-      if (!merged[sorteo][provincia as ProvinciaKeyInternal] && value) {
-        merged[sorteo][provincia as ProvinciaKeyInternal] = value;
-      }
-    }
-  }
-
-  return merged;
 }
 
 /* =========================
@@ -589,77 +440,18 @@ export async function GET(request: Request) {
   try {
     const now = getDebugNowFromRequest(request) ?? getArgentinaTime();
 
-    // Fetch HTML from both pages
-    const [htmlHoy, htmlAyer] = await Promise.all([
-      fetchHTML(URL_HOY),
-      fetchHTML(URL_AYER),
-    ]);
+    const { staticHtml, ajaxHtml } = await fetchNotitimbaData();
 
-    // Parse pages with their specific parsers
-    let dataHoy = parseHoyPage(htmlHoy);
-    let dataAyer = parseAyerPage(htmlAyer);
+    const dataHoy = parseNotitimbaResponse(ajaxHtml);
 
-    // Determine which of today's sorteos need fallback
-    const sorteosToFallback: SorteoKeyInternal[] = SORTEO_ORDER.filter(
-      (sorteo) =>
-        isSorteoPastDeadline(sorteo, now) && isSorteoMissingData(dataHoy, sorteo)
-    );
-
-    // Check if yesterday's nocturna also needs fallback
-    const nocturnaAyerMissing = isSorteoMissingData(dataAyer, "nocturna");
-
-    // If anything needs fallback, fetch notitimba once and use both results
-    if (sorteosToFallback.length > 0 || nocturnaAyerMissing) {
-      console.log(
-        `[Quiniela] Fallback needed —${
-          sorteosToFallback.length > 0
-            ? ` today: ${sorteosToFallback.join(", ")}`
-            : ""
-        }${nocturnaAyerMissing ? " nocturna ayer" : ""}. Trying notitimba...`
-      );
-
-      const { staticHtml, ajaxHtml } = await fetchNotitimbaData();
-
-      // Fill today's missing sorteos from the AJAX response
-      if (sorteosToFallback.length > 0) {
-        const dataFallback = parseNotitimbaResponse(
-          ajaxHtml,
-          sorteosToFallback
-        );
-        dataHoy = mergeParsedData(dataHoy, dataFallback);
-
-        const filledSorteos = sorteosToFallback.filter(
-          (s) => Object.keys(dataFallback[s]).length > 0
-        );
-        if (filledSorteos.length > 0) {
-          console.log(
-            `[Quiniela] Notitimba filled today's data for: ${filledSorteos.join(", ")}`
-          );
-        }
-      }
-
-      // Fill yesterday's nocturna from the static historical table (#Unoct)
-      if (nocturnaAyerMissing) {
-        const nocturnaFallback = parseNotitimbaNocturnaAyer(staticHtml, now);
-        for (const [provincia, value] of Object.entries(nocturnaFallback)) {
-          if (
-            value &&
-            !dataAyer.nocturna[provincia as ProvinciaKeyInternal]
-          ) {
-            dataAyer.nocturna[provincia as ProvinciaKeyInternal] = value;
-          }
-        }
-
-        const filledCount = Object.values(nocturnaFallback).filter(Boolean).length;
-        if (filledCount > 0) {
-          console.log(
-            `[Quiniela] Notitimba filled nocturna ayer for ${filledCount} provinces.`
-          );
-        }
+    const dataAyer = emptyParsedData();
+    const nocturnaAyer = parseNotitimbaNocturnaAyer(staticHtml, now);
+    for (const [provincia, value] of Object.entries(nocturnaAyer)) {
+      if (value) {
+        dataAyer.nocturna[provincia as ProvinciaKeyInternal] = value;
       }
     }
 
-    // Transform to the format expected by the table
     const response = transformToTableFormat(dataHoy, dataAyer, now);
 
     return NextResponse.json(response);
