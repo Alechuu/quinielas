@@ -123,3 +123,38 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes numero-pop {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  35% {
+    transform: scale(1.14);
+    filter: brightness(1.35);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes cell-flash {
+  0% {
+    box-shadow: inset 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+  40% {
+    box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.55);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+}
+
+.animate-numero-change {
+  animation: numero-pop 0.55s ease-out;
+}
+
+.animate-cell-change {
+  animation: cell-flash 0.7s ease-out;
+}

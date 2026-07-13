@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 interface QuinielaData {
   fecha: string;
   consultado: string;
@@ -12,7 +14,8 @@ interface QuinielaData {
 
 interface QuinielaTableProps {
   data: QuinielaData | null;
-  loading: boolean;
+  initialLoading: boolean;
+  refreshing: boolean;
   nocturnasAyer: { [provincia: string]: string | null };
   visibleHorarios: string[];
 }
@@ -39,17 +42,50 @@ const provincias = [
   { key: "Montevideo", label: "Montevideo" },
 ];
 
+function QuinielaNumero({
+  value,
+  showPlaceholder,
+}: {
+  value: string;
+  showPlaceholder: boolean;
+}) {
+  const prevValueRef = useRef<string | null>(null);
+  const [animate, setAnimate] = useState(false);
+
+  useEffect(() => {
+    const prev = prevValueRef.current;
+
+    if (prev !== null && value !== prev && value !== "----") {
+      setAnimate(true);
+      const timeoutId = setTimeout(() => setAnimate(false), 600);
+      prevValueRef.current = value;
+      return () => clearTimeout(timeoutId);
+    }
+
+    prevValueRef.current = value;
+  }, [value]);
+
+  const display = showPlaceholder ? "----" : value;
+
+  return (
+    <div
+      className={`text-5xl font-black drop-shadow-lg ${
+        showPlaceholder ? "animate-pulse text-slate-400" : "text-white"
+      } ${animate ? "animate-numero-change" : ""}`}
+    >
+      {display}
+    </div>
+  );
+}
+
 export function QuinielaTable({
   data,
-  loading,
+  initialLoading,
+  refreshing,
   nocturnasAyer,
   visibleHorarios,
 }: QuinielaTableProps) {
-  // Obtener numero para un horario y provincia
   const getNumero = (provincia: string, horario: string): string => {
-    // Nocturna: backend fills sorteos[x].Nocturna with yesterday's values
-    // before the draw and today's values after. Fall back to nocturnasAyer
-    // if sorteos doesn't have it yet.
     if (horario === "Nocturna") {
       const fromSorteos = data?.sorteos?.[provincia]?.Nocturna;
       if (fromSorteos) return fromSorteos;
@@ -59,7 +95,6 @@ export function QuinielaTable({
       return "----";
     }
 
-    // Para otros horarios, verificar si ya deberia estar visible
     if (!visibleHorarios.includes(horario)) {
       return "----";
     }
@@ -68,44 +103,35 @@ export function QuinielaTable({
     return data.sorteos[provincia][horario] || "----";
   };
 
-  // Determinar si mostrar la celda
-  // Montevideo: no tiene Previa, Primera ni Vespertina del dia (solo Matutina de hoy + Nocturna de ayer)
   const shouldShowCell = (provincia: string, horario: string): boolean => {
     if (provincia === "Montevideo") {
-      // Montevideo solo muestra Matutina (de hoy) y Nocturna (vespertina de ayer)
       return horario === "Matutina" || horario === "Nocturna";
     }
     return true;
   };
 
-  // Obtener color de fondo para cada provincia/horario
   const getCellColor = (
     provincia: string,
     horario: string,
     isEmpty: boolean
   ): string => {
     if (isEmpty) {
-      // Celdas vacías oscuras
       return "bg-slate-700/40";
     }
 
     if (provincia === "Montevideo") {
-      // Montevideo en verde oscuro acorde al grillo
       return "bg-emerald-700/90";
     }
 
     if (horario === "Nocturna") {
-      // Nocturna en azul verdoso oscuro
       return "bg-cyan-700/80";
     }
 
-    // Resto en verde lima oscuro acorde al grillo
     return "bg-[#7fb11a]/90";
   };
 
   return (
     <div className="w-full flex-1 grid grid-rows-[auto_1fr]">
-      {/* Header row */}
       <div className="grid grid-cols-5">
         {horarios.map((horario, index) => (
           <div
@@ -126,7 +152,6 @@ export function QuinielaTable({
         ))}
       </div>
 
-      {/* Data rows */}
       <div className="grid grid-rows-6">
         {provincias.map((provincia) => (
           <div key={provincia.key} className="grid grid-cols-5">
@@ -151,26 +176,62 @@ export function QuinielaTable({
               );
 
               return (
-                <div
+                <QuinielaCell
                   key={horario.key}
-                  className={`border-2 border-slate-600 px-2 py-2 ${cellColor} hover:opacity-90 transition-opacity flex flex-col items-center justify-center text-center`}
-                >
-                  <div className="text-base md:text-2xl font-bold text-white mb-1 drop-shadow">
-                    {provincia.label}
-                  </div>
-                  <div
-                    className={`text-5xl font-black drop-shadow-lg ${
-                      loading ? "animate-pulse text-slate-400" : "text-white"
-                    }`}
-                  >
-                    {loading ? "----" : numero}
-                  </div>
-                </div>
+                  provinciaLabel={provincia.label}
+                  numero={numero}
+                  cellColor={cellColor}
+                  showPlaceholder={initialLoading}
+                  refreshing={refreshing}
+                />
               );
             })}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function QuinielaCell({
+  provinciaLabel,
+  numero,
+  cellColor,
+  showPlaceholder,
+  refreshing,
+}: {
+  provinciaLabel: string;
+  numero: string;
+  cellColor: string;
+  showPlaceholder: boolean;
+  refreshing: boolean;
+}) {
+  const prevNumeroRef = useRef<string | null>(null);
+  const [cellAnimate, setCellAnimate] = useState(false);
+
+  useEffect(() => {
+    const prev = prevNumeroRef.current;
+
+    if (prev !== null && numero !== prev && numero !== "----") {
+      setCellAnimate(true);
+      const timeoutId = setTimeout(() => setCellAnimate(false), 700);
+      prevNumeroRef.current = numero;
+      return () => clearTimeout(timeoutId);
+    }
+
+    prevNumeroRef.current = numero;
+  }, [numero]);
+
+  return (
+    <div
+      className={`border-2 border-slate-600 px-2 py-2 ${cellColor} hover:opacity-90 transition-opacity flex flex-col items-center justify-center text-center ${
+        cellAnimate ? "animate-cell-change" : ""
+      } ${refreshing ? "opacity-95" : ""}`}
+    >
+      <div className="text-base md:text-2xl font-bold text-white mb-1 drop-shadow">
+        {provinciaLabel}
+      </div>
+      <QuinielaNumero value={numero} showPlaceholder={showPlaceholder} />
     </div>
   );
 }

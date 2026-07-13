@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { QuinielaTable } from "@/components/quiniela-table";
 import { SidebarPanel } from "@/components/sidebar-panel";
@@ -69,8 +69,10 @@ function QuinielaContent() {
       : null;
 
   const [data, setData] = useState<QuinielaData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
   const [simTimeInput, setSimTimeInput] = useState(simulatedTime ?? "");
 
   useEffect(() => {
@@ -110,7 +112,12 @@ function QuinielaContent() {
   }, [simulatedTime]);
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    const isFirstLoad = !hasLoadedOnceRef.current;
+    if (isFirstLoad) {
+      setInitialLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     setError(null);
 
     try {
@@ -126,10 +133,15 @@ function QuinielaContent() {
 
       const jsonData: QuinielaData = await response.json();
       setData(jsonData);
+      hasLoadedOnceRef.current = true;
     } catch {
       setError("Error al conectar con la API");
     } finally {
-      setLoading(false);
+      if (isFirstLoad) {
+        setInitialLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   }, [isDebug, simulatedTime]);
 
@@ -180,14 +192,14 @@ function QuinielaContent() {
                     setDebugQueryTime(value);
                   }
                 }}
-                disabled={loading}
+                disabled={initialLoading || refreshing}
                 className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-1 px-3 rounded-md"
               >
                 Aplicar
               </Button>
               <Button
                 onClick={() => setDebugQueryTime(null)}
-                disabled={loading}
+                disabled={initialLoading || refreshing}
                 className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-1 px-3 rounded-md"
               >
                 Hora real
@@ -195,11 +207,11 @@ function QuinielaContent() {
             </div>
             <Button
               onClick={fetchData}
-              disabled={loading}
+              disabled={initialLoading || refreshing}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-xl transition-all duration-200 shadow-lg"
             >
               <RefreshCw
-                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
               />
               Actualizar
             </Button>
@@ -218,7 +230,8 @@ function QuinielaContent() {
           <div className="flex-1 bg-slate-800/80 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden border border-emerald-500/30 flex flex-col">
             <QuinielaTable
               data={data}
-              loading={loading}
+              initialLoading={initialLoading}
+              refreshing={refreshing}
               nocturnasAyer={nocturnasAyer}
               visibleHorarios={getVisibleHorarios()}
             />
