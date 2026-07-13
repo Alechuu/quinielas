@@ -25,6 +25,12 @@ export interface ExtractedCabezas {
   elEspecial: string | null;
 }
 
+export interface ValidatedCabezas {
+  numerazo: string;
+  laFija: string;
+  elEspecial: string;
+}
+
 const TARGET_HEIGHT = 2048;
 
 const REGIONS = {
@@ -154,7 +160,7 @@ export async function extractCabezasFromImage(
 
 export function isValidExtraction(
   extracted: ExtractedCabezas
-): extracted is Required<ExtractedCabezas> {
+): extracted is ValidatedCabezas {
   return Boolean(
     extracted.numerazo &&
       /^\d{4}$/.test(extracted.numerazo) &&
@@ -163,27 +169,4 @@ export function isValidExtraction(
       extracted.elEspecial &&
       /^\d{2}$/.test(extracted.elEspecial)
   );
-}
-
-export async function isCabezasStoryImage(imageBuffer: Buffer): Promise<boolean> {
-  const image = await loadImage(imageBuffer);
-  image.resize(100, 100);
-
-  const { data } = image.bitmap;
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-
-  for (let i = 0; i < data.length; i += 4) {
-    red += data[i];
-    green += data[i + 1];
-    blue += data[i + 2];
-  }
-
-  const pixels = data.length / 4;
-  const avgRed = red / pixels;
-  const avgGreen = green / pixels;
-  const avgBlue = blue / pixels;
-
-  return avgBlue > avgRed + 50 && avgGreen > avgRed + 50;
 }

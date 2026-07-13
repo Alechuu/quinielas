@@ -10,7 +10,8 @@ export async function GET(request: Request) {
   const shouldSync = url.searchParams.get("sync") === "1";
 
   if (shouldSync) {
-    const result = await syncCabezasFromInstagram();
+    const force = url.searchParams.get("force") === "1";
+    const result = await syncCabezasFromInstagram({ force });
     if (result.ok && result.data) {
       return NextResponse.json(result.data);
     }

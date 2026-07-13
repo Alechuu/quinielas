@@ -5,7 +5,7 @@ import Image from "next/image";
 import { RefreshCw } from "lucide-react";
 
 const API_URL = "/api/cabezas";
-const AUTO_SYNC_INTERVAL = 15 * 60 * 1000;
+const AUTO_SYNC_INTERVAL = 60 * 60 * 1000;
 const MANUAL_OVERRIDE_KEY = "cabezasManualOverrideDate";
 
 interface CabezasResponse {
@@ -180,7 +180,11 @@ export function SidebarPanel() {
       }
 
       try {
-        const url = sync ? `${API_URL}?sync=1` : API_URL;
+        const params = new URLSearchParams();
+        if (sync) params.set("sync", "1");
+        if (force) params.set("force", "1");
+        const query = params.toString();
+        const url = query ? `${API_URL}?${query}` : API_URL;
         const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) {
           throw new Error("No se pudo cargar las cabezas");
@@ -372,7 +376,7 @@ export function SidebarPanel() {
                 type="button"
                 onClick={handleRefresh}
                 disabled={refreshing}
-                aria-label="Actualizar desde Instagram"
+                aria-label="Actualizar cabezas del día"
                 className="inline-flex items-center justify-center text-white/90 hover:text-white disabled:opacity-60 transition-colors"
                 style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
               >

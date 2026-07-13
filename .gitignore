@@ -20,9 +20,7 @@ yarn-error.log*
 .env*
 !.env.example
 
-# instagram session artifacts
-/data/ig-session.json
-/data/ig-cookies.json
+# local data cache
 /data/cabezas.json
 
 # tesseract ocr cache
