@@ -2,7 +2,7 @@
   "functions": {
     "app/api/cabezas/route.ts": {
       "maxDuration": 60,
-      "includeFiles": "node_modules/{tesseract.js/src/worker-script,tesseract.js-core,wasm-feature-detect}/**"
+      "includeFiles": "node_modules/{tesseract.js,tesseract.js-core,bmp-js,idb-keyval,wasm-feature-detect,regenerator-runtime,is-url,zlibjs,node-fetch}/**"
     }
   }
 }
