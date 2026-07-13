@@ -403,7 +403,19 @@ function transformToTableFormat(
       PROVINCIA_TO_TABLE
     )) {
       const provinciaKey = provinciaInternal as ProvinciaKeyInternal;
+
+      // Montevideo only runs vespertina + nocturna on notitimba; the UI shows
+      // today's draw under Matutina instead of Vespertina.
+      if (provinciaKey === "montevideo" && sorteoInternal === "vespertina") {
+        continue;
+      }
+
       let value = dataHoy[sorteoInternal][provinciaKey];
+
+      if (provinciaKey === "montevideo" && sorteoInternal === "matutina") {
+        value =
+          dataHoy.matutina.montevideo ?? dataHoy.vespertina.montevideo;
+      }
 
       if (
         sorteoInternal === "nocturna" &&
