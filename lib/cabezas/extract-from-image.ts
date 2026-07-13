@@ -1,6 +1,7 @@
 import { decode as decodeWebp } from "@jsquash/webp";
 import Jimp from "jimp";
 import Tesseract from "tesseract.js";
+import { getTesseractWorkerOptions } from "@/lib/cabezas/tesseract-config";
 
 function isWebp(buffer: Buffer): boolean {
   return (
@@ -102,7 +103,7 @@ export async function extractCabezasFromImage(
     .resize(targetWidth, TARGET_HEIGHT)
     .getBufferAsync(Jimp.MIME_PNG);
 
-  const worker = await Tesseract.createWorker("eng");
+  const worker = await Tesseract.createWorker("eng", 1, getTesseractWorkerOptions());
 
   try {
     const normalizedBuffer = await normalized;

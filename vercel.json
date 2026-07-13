@@ -1,7 +1,8 @@
 {
   "functions": {
     "app/api/cabezas/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "node_modules/{tesseract.js/src/worker-script,tesseract.js-core,wasm-feature-detect}/**"
     }
   }
 }

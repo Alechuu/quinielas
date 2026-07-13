@@ -6,13 +6,23 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  serverExternalPackages: ["tesseract.js"],
+  serverExternalPackages: [
+    "tesseract.js",
+    "tesseract.js-core",
+    "wasm-feature-detect",
+  ],
   outputFileTracingIncludes: {
     "/api/cabezas": [
-      "./node_modules/tesseract.js-core/tesseract-core-simd.wasm",
-      "./node_modules/tesseract.js-core/tesseract-core.wasm",
-      "./node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm",
-      "./node_modules/tesseract.js-core/tesseract-core-lstm.wasm",
+      "./node_modules/tesseract.js/src/worker-script/**/*",
+      "./node_modules/tesseract.js/src/worker/**/*",
+      "./node_modules/tesseract.js/src/utils/**/*",
+      "./node_modules/tesseract.js/src/constants/**/*",
+      "./node_modules/tesseract.js-core/**/*",
+      "./node_modules/wasm-feature-detect/**/*",
+      "./node_modules/regenerator-runtime/**/*",
+      "./node_modules/is-url/**/*",
+      "./node_modules/zlibjs/**/*",
+      "./node_modules/node-fetch/**/*",
     ],
   },
 };
