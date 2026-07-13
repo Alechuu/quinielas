@@ -362,7 +362,7 @@ export function SidebarPanel() {
               }}
               className="text-4xl md:text-5xl font-black text-blue-950 bg-transparent border-none text-center w-full outline-none px-2 py-1"
             />
-            <div className="mt-4 flex items-center justify-center gap-1.5">
+            <div className="mt-4 flex items-center justify-center gap-2">
               <p
                 className="text-[10px] md:text-[11px] font-bold text-white tracking-wide"
                 style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
@@ -377,11 +377,10 @@ export function SidebarPanel() {
                 onClick={handleRefresh}
                 disabled={refreshing}
                 aria-label="Actualizar cabezas del día"
-                className="inline-flex items-center justify-center text-white/90 hover:text-white disabled:opacity-60 transition-colors"
-                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/50 bg-white/20 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-white/35 hover:border-white/70 active:scale-95 disabled:opacity-60 disabled:active:scale-100"
               >
                 <RefreshCw
-                  className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                 />
               </button>
             </div>
