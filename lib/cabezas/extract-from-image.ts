@@ -1,5 +1,23 @@
-import sharp from "sharp";
+import { decode as decodeWebp } from "@jsquash/webp";
+import Jimp from "jimp";
 import Tesseract from "tesseract.js";
+
+function isWebp(buffer: Buffer): boolean {
+  return (
+    buffer.length > 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  );
+}
+
+async function loadImage(buffer: Buffer): Promise<Jimp> {
+  if (isWebp(buffer)) {
+    const { data, width, height } = await decodeWebp(buffer);
+    return new Jimp({ data: Buffer.from(data), width, height });
+  }
+
+  return Jimp.read(buffer);
+}
 
 export interface ExtractedCabezas {
   numerazo: string | null;
@@ -48,56 +66,58 @@ async function cropFromBuffer(
   const cropWidth = Math.min(Math.round(width * region.w), width - left);
   const cropHeight = Math.min(Math.round(height * region.h), height - top);
 
-  let pipeline = sharp(source).extract({
-    left,
-    top,
-    width: cropWidth,
-    height: cropHeight,
-  });
+  const image = await loadImage(source);
+  image.crop(left, top, cropWidth, cropHeight);
 
   if (resizeWidth) {
-    pipeline = pipeline.resize({ width: resizeWidth });
+    image.resize(resizeWidth, Jimp.AUTO);
   }
 
-  return pipeline.png().toBuffer();
+  return image.getBufferAsync(Jimp.MIME_PNG);
+}
+
+async function enhanceForOcr(buffer: Buffer): Promise<Buffer> {
+  const image = await loadImage(buffer);
+  image.greyscale().normalize();
+  return image.getBufferAsync(Jimp.MIME_PNG);
 }
 
 export async function extractCabezasFromImage(
   imageBuffer: Buffer
 ): Promise<ExtractedCabezas> {
-  const metadata = await sharp(imageBuffer).metadata();
-  const sourceWidth = metadata.width ?? 1;
-  const sourceHeight = metadata.height ?? 1;
+  const source = await loadImage(imageBuffer);
+  const sourceWidth = source.getWidth();
+  const sourceHeight = source.getHeight();
   const scale = TARGET_HEIGHT / sourceHeight;
   const targetWidth = Math.round(sourceWidth * scale);
 
-  const normalized = await sharp(imageBuffer)
+  const normalized = source
+    .clone()
     .resize(targetWidth, TARGET_HEIGHT)
-    .png()
-    .toBuffer();
+    .getBufferAsync(Jimp.MIME_PNG);
 
   const worker = await Tesseract.createWorker("eng");
 
   try {
+    const normalizedBuffer = await normalized;
+
     const numerazoBuffer = await cropFromBuffer(
-      normalized,
+      normalizedBuffer,
       targetWidth,
       TARGET_HEIGHT,
       REGIONS.numerazo,
       900
-    ).then((buffer) =>
-      sharp(buffer).grayscale().normalize().png().toBuffer()
-    );
+    ).then(enhanceForOcr);
 
     const bottomBuffer = await cropFromBuffer(
-      normalized,
+      normalizedBuffer,
       targetWidth,
       TARGET_HEIGHT,
       REGIONS.bottom
     );
-    const bottomMeta = await sharp(bottomBuffer).metadata();
-    const bottomWidth = bottomMeta.width ?? 1;
-    const bottomHeight = bottomMeta.height ?? 1;
+    const bottomImage = await loadImage(bottomBuffer);
+    const bottomWidth = bottomImage.getWidth();
+    const bottomHeight = bottomImage.getHeight();
 
     const fijaBuffer = await cropFromBuffer(
       bottomBuffer,
@@ -105,9 +125,7 @@ export async function extractCabezasFromImage(
       bottomHeight,
       REGIONS.fijaInBottom,
       500
-    ).then((buffer) =>
-      sharp(buffer).grayscale().normalize().png().toBuffer()
-    );
+    ).then(enhanceForOcr);
 
     const especialBuffer = await cropFromBuffer(
       bottomBuffer,
@@ -115,9 +133,7 @@ export async function extractCabezasFromImage(
       bottomHeight,
       REGIONS.especialInBottom,
       500
-    ).then((buffer) =>
-      sharp(buffer).grayscale().normalize().png().toBuffer()
-    );
+    ).then(enhanceForOcr);
 
     const [numerazoResult, fijaResult, especialResult] = await Promise.all([
       worker.recognize(numerazoBuffer),
@@ -150,21 +166,21 @@ export function isValidExtraction(
 }
 
 export async function isCabezasStoryImage(imageBuffer: Buffer): Promise<boolean> {
-  const { data } = await sharp(imageBuffer)
-    .resize(100, 100)
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  const image = await loadImage(imageBuffer);
+  image.resize(100, 100);
 
+  const { data } = image.bitmap;
   let red = 0;
   let green = 0;
   let blue = 0;
-  for (let i = 0; i < data.length; i += 3) {
+
+  for (let i = 0; i < data.length; i += 4) {
     red += data[i];
     green += data[i + 1];
     blue += data[i + 2];
   }
 
-  const pixels = data.length / 3;
+  const pixels = data.length / 4;
   const avgRed = red / pixels;
   const avgGreen = green / pixels;
   const avgBlue = blue / pixels;
