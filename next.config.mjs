@@ -6,7 +6,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  serverExternalPackages: ["tesseract.js", "sharp"],
+  serverExternalPackages: ["tesseract.js"],
   outputFileTracingIncludes: {
     "/api/cabezas": [
       "./node_modules/tesseract.js-core/tesseract-core-simd.wasm",
