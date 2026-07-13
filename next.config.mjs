@@ -9,8 +9,10 @@ const nextConfig = {
   serverExternalPackages: ["tesseract.js", "sharp"],
   outputFileTracingIncludes: {
     "/api/cabezas": [
-      "./node_modules/tesseract.js-core/**/*.wasm",
-      "./node_modules/tesseract.js/**/*.js",
+      "./node_modules/tesseract.js-core/tesseract-core-simd.wasm",
+      "./node_modules/tesseract.js-core/tesseract-core.wasm",
+      "./node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm",
+      "./node_modules/tesseract.js-core/tesseract-core-lstm.wasm",
     ],
   },
 };
