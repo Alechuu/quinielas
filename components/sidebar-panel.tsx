@@ -1,9 +1,45 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import { RefreshCw } from "lucide-react";
 
-// Funcion para obtener la hora de Argentina
+const API_URL = "/api/cabezas";
+const AUTO_SYNC_INTERVAL = 15 * 60 * 1000;
+const MANUAL_OVERRIDE_KEY = "cabezasManualOverrideDate";
+
+interface CabezasResponse {
+  numerazo?: string;
+  laFija?: string;
+  elEspecial?: string;
+  source?: "instagram" | "manual";
+  updatedAt?: string;
+  syncError?: string;
+}
+
+function getArgentinaDateKey(): string {
+  return new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+  });
+}
+
+function formatLastUpdated(iso: string): string {
+  const parts = new Intl.DateTimeFormat("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${get("day")}/${get("month")}/${get("year")} - ${get("hour")}:${get("minute")}`;
+}
+
 function getArgentinaTimeParts(): {
   hours: string;
   minutes: string;
@@ -21,7 +57,6 @@ function getArgentinaTimeParts(): {
   };
 }
 
-// Componente del reloj digital
 function DigitalClock() {
   const initial = getArgentinaTimeParts();
   const hoursRef = useRef<HTMLSpanElement>(null);
@@ -36,7 +71,6 @@ function DigitalClock() {
       const next = getArgentinaTimeParts();
       const prev = lastTimeRef.current;
 
-      // Actualizar solo el nodo que cambia minimiza repaints en TVs.
       if (next.hours !== prev.hours && hoursRef.current) {
         hoursRef.current.textContent = next.hours;
       }
@@ -48,7 +82,6 @@ function DigitalClock() {
       }
       lastTimeRef.current = next;
 
-      // Reprogramar cerca del siguiente segundo reduce jitter en navegadores lentos.
       const msToNextSecond = 1000 - (Date.now() % 1000);
       timeoutId = setTimeout(tick, msToNextSecond + 10);
     };
@@ -60,7 +93,6 @@ function DigitalClock() {
 
   return (
     <div className="bg-blue-950 border border-blue-800 rounded-lg px-4 md:px-6 py-2 md:py-3">
-      {/* Contenedor con dimensiones fijas para evitar reflow */}
       <div
         className="text-blue-100 font-black text-3xl md:text-4xl font-mono tracking-wider tabular-nums leading-none"
         style={{
@@ -78,14 +110,106 @@ function DigitalClock() {
   );
 }
 
+function applyCabezasToState(
+  data: CabezasResponse,
+  setNumerazo: (value: string) => void,
+  setLaFija: (value: string) => void,
+  setElEspecial: (value: string) => void
+) {
+  const numerazo = data.numerazo ?? "";
+  const laFija = data.laFija ?? "";
+  const elEspecial = data.elEspecial ?? "";
+
+  setNumerazo(numerazo);
+  setLaFija(laFija);
+  setElEspecial(elEspecial);
+
+  localStorage.setItem("numerazo", numerazo);
+  localStorage.setItem("laFija", laFija);
+  localStorage.setItem("elEspecial", elEspecial);
+}
+
 export function SidebarPanel() {
-  // Variables editables para el panel
   const [numerazo, setNumerazo] = useState("");
   const [laFija, setLaFija] = useState("");
   const [elEspecial, setElEspecial] = useState("");
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const manualOverrideRef = useRef(false);
 
-  // Cargar valores del localStorage al montar el componente
+  const hasManualOverrideToday = useCallback(() => {
+    return localStorage.getItem(MANUAL_OVERRIDE_KEY) === getArgentinaDateKey();
+  }, []);
+
+  const markManualOverride = useCallback(() => {
+    manualOverrideRef.current = true;
+    localStorage.setItem(MANUAL_OVERRIDE_KEY, getArgentinaDateKey());
+  }, []);
+
+  const persistManualValues = useCallback(
+    async (values: { numerazo: string; laFija: string; elEspecial: string }) => {
+      markManualOverride();
+
+      localStorage.setItem("numerazo", values.numerazo);
+      localStorage.setItem("laFija", values.laFija);
+      localStorage.setItem("elEspecial", values.elEspecial);
+      setLastUpdated(new Date().toISOString());
+
+      try {
+        await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(values),
+        });
+      } catch {
+        // La edición local sigue disponible aunque falle el guardado remoto.
+      }
+    },
+    [markManualOverride]
+  );
+
+  const loadFromApi = useCallback(
+    async (sync = false, force = false) => {
+      if (sync && hasManualOverrideToday() && !force) {
+        return;
+      }
+
+      if (sync) {
+        setRefreshing(true);
+      }
+
+      try {
+        const url = sync ? `${API_URL}?sync=1` : API_URL;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("No se pudo cargar las cabezas");
+        }
+
+        const data = (await response.json()) as CabezasResponse;
+
+        if (!hasManualOverrideToday() || force) {
+          applyCabezasToState(data, setNumerazo, setLaFija, setElEspecial);
+        }
+
+        if (
+          data.updatedAt &&
+          !data.syncError &&
+          new Date(data.updatedAt).getTime() > 0
+        ) {
+          setLastUpdated(data.updatedAt);
+        }
+      } catch {
+        // La edición manual sigue disponible aunque falle la sincronización.
+      } finally {
+        if (sync) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [hasManualOverrideToday]
+  );
+
   useEffect(() => {
     const numerazoGuardado = localStorage.getItem("numerazo") || "";
     const laFijaGuardada = localStorage.getItem("laFija") || "";
@@ -94,32 +218,57 @@ export function SidebarPanel() {
     setNumerazo(numerazoGuardado);
     setLaFija(laFijaGuardada);
     setElEspecial(elEspecialGuardado);
-  }, []);
+    manualOverrideRef.current = hasManualOverrideToday();
 
-  // Guardar numerazo en localStorage
+    loadFromApi(true);
+  }, [hasManualOverrideToday, loadFromApi]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadFromApi(true);
+    }, AUTO_SYNC_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [loadFromApi]);
+
   const handleNumerazoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const valor = e.target.value;
     setNumerazo(valor);
-    localStorage.setItem("numerazo", valor);
+    void persistManualValues({
+      numerazo: valor,
+      laFija,
+      elEspecial,
+    });
   };
 
-  // Guardar la fija en localStorage
   const handleLaFijaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const valor = e.target.value;
     setLaFija(valor);
-    localStorage.setItem("laFija", valor);
+    void persistManualValues({
+      numerazo,
+      laFija: valor,
+      elEspecial,
+    });
   };
 
-  // Guardar el especial en localStorage
   const handleElEspecialChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const valor = e.target.value;
     setElEspecial(valor);
-    localStorage.setItem("elEspecial", valor);
+    void persistManualValues({
+      numerazo,
+      laFija,
+      elEspecial: valor,
+    });
+  };
+
+  const handleRefresh = () => {
+    localStorage.removeItem(MANUAL_OVERRIDE_KEY);
+    manualOverrideRef.current = false;
+    void loadFromApi(true, true);
   };
 
   return (
-    <div className="relative h-full rounded-2xl overflow-hidden flex flex-col items-center justify-start pt-4 px-4 shadow-2xl border-4 border-emerald-300 bg-linear-to-b from-emerald-50 via-green-100 to-emerald-200">
-      {/* Imagen de fondo del grillo */}
+    <div className="relative h-full rounded-2xl overflow-hidden flex flex-col items-center pt-4 px-4 pb-3 shadow-2xl border-4 border-emerald-300 bg-linear-to-b from-emerald-50 via-green-100 to-emerald-200">
       <div className="absolute inset-0 opacity-60 rounded-2xl overflow-hidden">
         <Image
           src="/grillo.png"
@@ -131,7 +280,7 @@ export function SidebarPanel() {
       </div>
       <div className="absolute inset-0 bg-linear-to-b from-emerald-900/28 via-emerald-900/22 to-emerald-950/30 rounded-2xl" />
 
-      <div className="relative z-10 text-center w-full">
+      <div className="relative z-10 flex flex-col flex-1 w-full text-center min-h-0">
         <div className="flex flex-col items-center gap-1 mb-4">
           <h2
             className="text-xl md:text-2xl font-black text-emerald-50"
@@ -209,6 +358,29 @@ export function SidebarPanel() {
               }}
               className="text-4xl md:text-5xl font-black text-blue-950 bg-transparent border-none text-center w-full outline-none px-2 py-1"
             />
+            <div className="mt-4 flex items-center justify-center gap-1.5">
+              <p
+                className="text-[10px] md:text-[11px] font-bold text-white tracking-wide"
+                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
+              >
+                Ultima actualización:{" "}
+                {lastUpdated && new Date(lastUpdated).getTime() > 0
+                  ? formatLastUpdated(lastUpdated)
+                  : "Sin actualizar"}
+              </p>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                aria-label="Actualizar desde Instagram"
+                className="inline-flex items-center justify-center text-white/90 hover:text-white disabled:opacity-60 transition-colors"
+                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
+              >
+                <RefreshCw
+                  className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+                />
+              </button>
+            </div>
           </div>
         </div>
       </div>

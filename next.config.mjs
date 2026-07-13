@@ -6,6 +6,13 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-}
+  serverExternalPackages: ["tesseract.js", "sharp"],
+  outputFileTracingIncludes: {
+    "/api/cabezas": [
+      "./node_modules/tesseract.js-core/**/*.wasm",
+      "./node_modules/tesseract.js/**/*.js",
+    ],
+  },
+};
 
-export default nextConfig
+export default nextConfig;

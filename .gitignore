@@ -18,6 +18,15 @@ yarn-error.log*
 
 # env files
 .env*
+!.env.example
+
+# instagram session artifacts
+/data/ig-session.json
+/data/ig-cookies.json
+/data/cabezas.json
+
+# tesseract ocr cache
+*.traineddata
 
 # vercel
 .vercel
