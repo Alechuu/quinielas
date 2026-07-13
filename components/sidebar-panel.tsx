@@ -35,7 +35,7 @@ function getArgentinaTimeParts(): { hours: string; minutes: string } {
   };
 }
 
-const TEXT_SHADOW = "0 1px 2px rgba(0,0,0,0.5)";
+const TEXT_SHADOW = "0 2px 6px rgba(0,0,0,0.9)";
 
 function getWeatherIcon(code: number | null): LucideIcon {
   if (code === null) return Cloud;
@@ -54,12 +54,10 @@ function getWeatherIcon(code: number | null): LucideIcon {
 
 function WeatherSkeleton() {
   return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="flex items-center gap-2">
-        <div className="h-5 w-5 rounded-full bg-white/25 animate-pulse shrink-0" />
-        <div className="h-5 w-12 rounded bg-white/25 animate-pulse" />
-      </div>
-      <div className="h-2.5 w-24 rounded bg-white/20 animate-pulse" />
+    <div className="flex w-full flex-col items-center gap-2.5">
+      <div className="h-7 w-7 rounded-full bg-white/30 animate-pulse" />
+      <div className="h-7 w-16 rounded bg-white/30 animate-pulse" />
+      <div className="h-4 w-32 rounded bg-white/25 animate-pulse" />
     </div>
   );
 }
@@ -153,10 +151,10 @@ function DigitalClock({ quinielaRefreshKey }: { quinielaRefreshKey: number }) {
   const WeatherIcon = getWeatherIcon(weatherCode);
 
   return (
-    <div className="rounded-xl border border-white/35 bg-white/15 px-4 py-4 backdrop-blur-sm shadow-md">
-      <div className="flex min-h-[4rem] items-center justify-evenly gap-4">
+    <div className="rounded-xl border-2 border-white/80 bg-emerald-950/85 px-4 py-4 shadow-lg backdrop-blur-sm">
+      <div className="flex flex-col items-center gap-3">
         <div
-          className="shrink-0 text-emerald-50 font-black text-3xl md:text-4xl font-mono tracking-wider tabular-nums leading-none"
+          className="text-white font-black text-4xl md:text-5xl font-mono tracking-wider tabular-nums leading-none"
           style={{ textShadow: TEXT_SHADOW, contain: "paint" }}
         >
           <span ref={hoursRef}>{initial.hours}</span>:
@@ -165,30 +163,28 @@ function DigitalClock({ quinielaRefreshKey }: { quinielaRefreshKey: number }) {
 
         {(weatherLoading || temperature !== null) && (
           <>
-            <div className="h-12 w-px shrink-0 bg-white/30" />
+            <div className="h-px w-full bg-white/50" />
             {weatherLoading ? (
               <WeatherSkeleton />
             ) : (
               temperature !== null && (
-                <div className="flex shrink-0 flex-col items-center gap-2 text-center">
-                  <div className="flex items-center gap-2">
-                    <WeatherIcon
-                      className="h-5 w-5 shrink-0 text-emerald-50"
-                      style={{
-                        filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
-                      }}
-                      aria-hidden
-                    />
-                    <div
-                      className="text-emerald-50 font-black text-lg md:text-xl font-mono tabular-nums leading-none"
-                      style={{ textShadow: TEXT_SHADOW }}
-                    >
-                      {temperature}°C
-                    </div>
+                <div className="flex w-full flex-col items-center gap-2 text-center">
+                  <WeatherIcon
+                    className="h-7 w-7 md:h-8 md:w-8 shrink-0 text-white"
+                    style={{
+                      filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.8))",
+                    }}
+                    aria-hidden
+                  />
+                  <div
+                    className="text-white font-black text-2xl md:text-3xl font-mono tabular-nums leading-none"
+                    style={{ textShadow: TEXT_SHADOW }}
+                  >
+                    {temperature}°C
                   </div>
                   <p
-                    className="text-[10px] md:text-[11px] font-bold text-emerald-100/85 tracking-wide leading-none"
-                    style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
+                    className="text-sm md:text-base font-bold text-white tracking-wide leading-tight"
+                    style={{ textShadow: TEXT_SHADOW }}
                   >
                     {[weatherDescription, "Berisso"].filter(Boolean).join(" · ")}
                   </p>
