@@ -72,6 +72,7 @@ function QuinielaContent() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [quinielaRefreshKey, setQuinielaRefreshKey] = useState(0);
   const hasLoadedOnceRef = useRef(false);
   const [simTimeInput, setSimTimeInput] = useState(simulatedTime ?? "");
 
@@ -133,6 +134,7 @@ function QuinielaContent() {
 
       const jsonData: QuinielaData = await response.json();
       setData(jsonData);
+      setQuinielaRefreshKey((key) => key + 1);
       hasLoadedOnceRef.current = true;
     } catch {
       setError("Error al conectar con la API");
@@ -240,7 +242,7 @@ function QuinielaContent() {
 
           {/* Panel lateral */}
           <div className="w-full lg:w-72 xl:w-80">
-            <SidebarPanel />
+            <SidebarPanel quinielaRefreshKey={quinielaRefreshKey} />
           </div>
         </div>
       </div>

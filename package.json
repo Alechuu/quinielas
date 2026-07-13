@@ -9,6 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@fontsource/dseg7-classic": "^5.2.5",
     "@jsquash/webp": "^1.5.0",
     "@radix-ui/react-slot": "1.1.1",
     "@vercel/analytics": "1.3.1",

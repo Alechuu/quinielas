@@ -4,6 +4,7 @@ import type { CabezasData } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "cabezas.json");
+const PERSIST_TO_DISK = !process.env.VERCEL;
 
 let memoryCache: CabezasData | null = null;
 
@@ -21,6 +22,7 @@ async function ensureDataDir() {
 
 export async function readCabezas(): Promise<CabezasData> {
   if (memoryCache) return memoryCache;
+  if (!PERSIST_TO_DISK) return { ...EMPTY_DATA };
 
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
@@ -34,6 +36,7 @@ export async function readCabezas(): Promise<CabezasData> {
 
 export async function writeCabezas(data: CabezasData): Promise<CabezasData> {
   memoryCache = data;
+  if (!PERSIST_TO_DISK) return data;
 
   try {
     await ensureDataDir();

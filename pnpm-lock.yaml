@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/dseg7-classic':
+        specifier: ^5.2.5
+        version: 5.2.5
       '@jsquash/webp':
         specifier: ^1.5.0
         version: 1.5.0
@@ -84,6 +87,9 @@ packages:
 
   '@emnapi/runtime@1.8.1':
     resolution: {integrity: sha512-mehfKSMWjjNol8659Z8KxEMrdSJDDot5SXMq00dM8BN4o+CLNXQ0xH2V7EchNHV4RmbZLmmPdEaXZc5H2FXmDg==}
+
+  '@fontsource/dseg7-classic@5.2.5':
+    resolution: {integrity: sha512-HMeQpwRFfptfmAXMAaN4H9lNKMmGHA0TOb8mUpdRAaCiYPYotQFG/bX9heU6cHQ8lG8KfDYv8DE3SUXIQS/wzw==}
 
   '@img/colour@1.0.0':
     resolution: {integrity: sha512-A5P/LfWGFSl6nsckYtjw9da+19jB8hkJ6ACTGcDfEJ0aE+l2n2El7dsVM7UVHZQ9s2lmYMWlrS21YLy2IR1LUw==}
@@ -1156,6 +1162,8 @@ snapshots:
     dependencies:
       tslib: 2.8.1
     optional: true
+
+  '@fontsource/dseg7-classic@5.2.5': {}
 
   '@img/colour@1.0.0':
     optional: true

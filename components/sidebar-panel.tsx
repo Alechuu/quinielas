@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Sun, Cloud, CloudSun, CloudFog, CloudDrizzle, CloudRain, Snowflake, CloudLightning, type LucideIcon } from "lucide-react";
 
 const API_URL = "/api/cabezas";
 const AUTO_SYNC_INTERVAL = 60 * 60 * 1000;
@@ -23,28 +23,7 @@ function getArgentinaDateKey(): string {
   });
 }
 
-function formatLastUpdated(iso: string): string {
-  const parts = new Intl.DateTimeFormat("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(iso));
-
-  const get = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-
-  return `${get("day")}/${get("month")}/${get("year")} - ${get("hour")}:${get("minute")}`;
-}
-
-function getArgentinaTimeParts(): {
-  hours: string;
-  minutes: string;
-  seconds: string;
-} {
+function getArgentinaTimeParts(): { hours: string; minutes: string } {
   const now = new Date(
     new Date().toLocaleString("en-US", {
       timeZone: "America/Argentina/Buenos_Aires",
@@ -53,16 +32,49 @@ function getArgentinaTimeParts(): {
   return {
     hours: String(now.getHours()).padStart(2, "0"),
     minutes: String(now.getMinutes()).padStart(2, "0"),
-    seconds: String(now.getSeconds()).padStart(2, "0"),
   };
 }
 
-function DigitalClock() {
+const TEXT_SHADOW = "0 1px 2px rgba(0,0,0,0.5)";
+
+function getWeatherIcon(code: number | null): LucideIcon {
+  if (code === null) return Cloud;
+  if (code === 0) return Sun;
+  if (code <= 2) return CloudSun;
+  if (code === 3) return Cloud;
+  if (code <= 48) return CloudFog;
+  if (code <= 57) return CloudDrizzle;
+  if (code <= 67) return CloudRain;
+  if (code <= 77) return Snowflake;
+  if (code <= 82) return CloudRain;
+  if (code <= 86) return Snowflake;
+  if (code <= 99) return CloudLightning;
+  return Cloud;
+}
+
+function WeatherSkeleton() {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="flex items-center gap-2">
+        <div className="h-5 w-5 rounded-full bg-white/25 animate-pulse shrink-0" />
+        <div className="h-5 w-12 rounded bg-white/25 animate-pulse" />
+      </div>
+      <div className="h-2.5 w-24 rounded bg-white/20 animate-pulse" />
+    </div>
+  );
+}
+
+function DigitalClock({ quinielaRefreshKey }: { quinielaRefreshKey: number }) {
   const initial = getArgentinaTimeParts();
   const hoursRef = useRef<HTMLSpanElement>(null);
   const minutesRef = useRef<HTMLSpanElement>(null);
-  const secondsRef = useRef<HTMLSpanElement>(null);
   const lastTimeRef = useRef(initial);
+  const [temperature, setTemperature] = useState<number | null>(null);
+  const [weatherDescription, setWeatherDescription] = useState<string | null>(
+    null
+  );
+  const [weatherCode, setWeatherCode] = useState<number | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(true);
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
@@ -77,13 +89,17 @@ function DigitalClock() {
       if (next.minutes !== prev.minutes && minutesRef.current) {
         minutesRef.current.textContent = next.minutes;
       }
-      if (next.seconds !== prev.seconds && secondsRef.current) {
-        secondsRef.current.textContent = next.seconds;
-      }
       lastTimeRef.current = next;
 
-      const msToNextSecond = 1000 - (Date.now() % 1000);
-      timeoutId = setTimeout(tick, msToNextSecond + 10);
+      const msToNextMinute = (() => {
+        const now = new Date(
+          new Date().toLocaleString("en-US", {
+            timeZone: "America/Argentina/Buenos_Aires",
+          })
+        );
+        return (60 - now.getSeconds()) * 1000 - now.getMilliseconds() + 50;
+      })();
+      timeoutId = setTimeout(tick, msToNextMinute);
     };
 
     tick();
@@ -91,20 +107,96 @@ function DigitalClock() {
     return () => clearTimeout(timeoutId);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadWeather = async () => {
+      setWeatherLoading(true);
+
+      try {
+        const response = await fetch("/api/weather", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const data = (await response.json()) as {
+          temperature?: number;
+          description?: string | null;
+          weatherCode?: number | null;
+        };
+
+        if (cancelled) return;
+
+        if (typeof data.temperature === "number") {
+          setTemperature(data.temperature);
+        }
+        if (data.description) {
+          setWeatherDescription(data.description);
+        }
+        if (typeof data.weatherCode === "number") {
+          setWeatherCode(data.weatherCode);
+        }
+      } catch {
+        // El reloj sigue funcionando aunque falle el clima.
+      } finally {
+        if (!cancelled) {
+          setWeatherLoading(false);
+        }
+      }
+    };
+
+    void loadWeather();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quinielaRefreshKey]);
+
+  const WeatherIcon = getWeatherIcon(weatherCode);
+
   return (
-    <div className="bg-blue-950 border border-blue-800 rounded-lg px-4 md:px-6 py-2 md:py-3">
-      <div
-        className="text-blue-100 font-black text-3xl md:text-4xl font-mono tracking-wider tabular-nums leading-none"
-        style={{
-          minWidth: "8ch",
-          textAlign: "center",
-          textShadow: "none",
-          contain: "paint",
-        }}
-      >
-        <span ref={hoursRef}>{initial.hours}</span>:
-        <span ref={minutesRef}>{initial.minutes}</span>:
-        <span ref={secondsRef}>{initial.seconds}</span>
+    <div className="rounded-xl border border-white/35 bg-white/15 px-4 py-4 backdrop-blur-sm shadow-md">
+      <div className="flex min-h-[4rem] items-center justify-evenly gap-4">
+        <div
+          className="shrink-0 text-emerald-50 font-black text-3xl md:text-4xl font-mono tracking-wider tabular-nums leading-none"
+          style={{ textShadow: TEXT_SHADOW, contain: "paint" }}
+        >
+          <span ref={hoursRef}>{initial.hours}</span>:
+          <span ref={minutesRef}>{initial.minutes}</span>
+        </div>
+
+        {(weatherLoading || temperature !== null) && (
+          <>
+            <div className="h-12 w-px shrink-0 bg-white/30" />
+            {weatherLoading ? (
+              <WeatherSkeleton />
+            ) : (
+              temperature !== null && (
+                <div className="flex shrink-0 flex-col items-center gap-2 text-center">
+                  <div className="flex items-center gap-2">
+                    <WeatherIcon
+                      className="h-5 w-5 shrink-0 text-emerald-50"
+                      style={{
+                        filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
+                      }}
+                      aria-hidden
+                    />
+                    <div
+                      className="text-emerald-50 font-black text-lg md:text-xl font-mono tabular-nums leading-none"
+                      style={{ textShadow: TEXT_SHADOW }}
+                    >
+                      {temperature}°C
+                    </div>
+                  </div>
+                  <p
+                    className="text-[10px] md:text-[11px] font-bold text-emerald-100/85 tracking-wide leading-none"
+                    style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
+                  >
+                    {[weatherDescription, "Berisso"].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+              )
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -129,12 +221,15 @@ function applyCabezasToState(
   localStorage.setItem("elEspecial", elEspecial);
 }
 
-export function SidebarPanel() {
+export function SidebarPanel({
+  quinielaRefreshKey,
+}: {
+  quinielaRefreshKey: number;
+}) {
   const [numerazo, setNumerazo] = useState("");
   const [laFija, setLaFija] = useState("");
   const [elEspecial, setElEspecial] = useState("");
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const manualOverrideRef = useRef(false);
 
@@ -154,7 +249,6 @@ export function SidebarPanel() {
       localStorage.setItem("numerazo", values.numerazo);
       localStorage.setItem("laFija", values.laFija);
       localStorage.setItem("elEspecial", values.elEspecial);
-      setLastUpdated(new Date().toISOString());
 
       try {
         await fetch(API_URL, {
@@ -194,14 +288,6 @@ export function SidebarPanel() {
 
         if (!hasManualOverrideToday() || force) {
           applyCabezasToState(data, setNumerazo, setLaFija, setElEspecial);
-        }
-
-        if (
-          data.updatedAt &&
-          !data.syncError &&
-          new Date(data.updatedAt).getTime() > 0
-        ) {
-          setLastUpdated(data.updatedAt);
         }
       } catch {
         // La edición manual sigue disponible aunque falle la sincronización.
@@ -284,17 +370,17 @@ export function SidebarPanel() {
       </div>
       <div className="absolute inset-0 bg-linear-to-b from-emerald-900/28 via-emerald-900/22 to-emerald-950/30 rounded-2xl" />
 
-      <div className="relative z-10 flex flex-col flex-1 w-full text-center min-h-0">
-        <div className="flex flex-col items-center gap-1 mb-4">
-          <h2
-            className="text-xl md:text-2xl font-black text-emerald-50"
-            style={{ textShadow: "0 1px 2px rgba(0,0,0,0.5)" }}
-          >
-            Cabezas del día
-          </h2>
-          <DigitalClock />
-        </div>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={refreshing}
+        aria-label="Actualizar cabezas del día"
+        className="absolute top-3 right-3 z-20 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/50 bg-white/20 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-white/35 hover:border-white/70 active:scale-95 disabled:opacity-60 disabled:active:scale-100"
+      >
+        <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+      </button>
 
+      <div className="relative z-10 flex flex-col flex-1 w-full text-center min-h-0">
         <div className="space-y-4">
           <div>
             <p
@@ -362,27 +448,8 @@ export function SidebarPanel() {
               }}
               className="text-4xl md:text-5xl font-black text-blue-950 bg-transparent border-none text-center w-full outline-none px-2 py-1"
             />
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <p
-                className="text-[10px] md:text-[11px] font-bold text-white tracking-wide"
-                style={{ textShadow: "0 2px 4px rgba(0,0,0,0.85)" }}
-              >
-                Ultima actualización:{" "}
-                {lastUpdated && new Date(lastUpdated).getTime() > 0
-                  ? formatLastUpdated(lastUpdated)
-                  : "Sin actualizar"}
-              </p>
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                aria-label="Actualizar cabezas del día"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/50 bg-white/20 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-white/35 hover:border-white/70 active:scale-95 disabled:opacity-60 disabled:active:scale-100"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-                />
-              </button>
+            <div className="mt-3 w-full">
+              <DigitalClock quinielaRefreshKey={quinielaRefreshKey} />
             </div>
           </div>
         </div>
