@@ -8,13 +8,16 @@ const API_URL = "/api/cabezas";
 const AUTO_SYNC_INTERVAL = 60 * 60 * 1000;
 const MANUAL_OVERRIDE_KEY = "cabezasManualOverrideDate";
 
+import type { CabezasSyncError } from "@/lib/cabezas/types";
+
 interface CabezasResponse {
   numerazo?: string;
   laFija?: string;
   elEspecial?: string;
   source?: "instagram" | "manual";
   updatedAt?: string;
-  syncError?: string;
+  syncOk?: boolean;
+  syncError?: CabezasSyncError;
 }
 
 function getArgentinaDateKey(): string {

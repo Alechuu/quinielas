@@ -8,9 +8,15 @@ import {
   buildViewerImageUrl,
   downloadViewerImage,
   fetchViewerStories,
+  InstaStoriesViewerError,
 } from "@/lib/cabezas/insta-stories-viewer";
 import { readCabezas, writeCabezas } from "@/lib/cabezas/storage";
-import type { CabezasData, CabezasSyncResult } from "@/lib/cabezas/types";
+import type {
+  CabezasData,
+  CabezasStoryAttempt,
+  CabezasSyncError,
+  CabezasSyncResult,
+} from "@/lib/cabezas/types";
 
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -23,6 +29,39 @@ function hasValidNumbers(data: CabezasData): boolean {
       data.elEspecial &&
       /^\d{2}$/.test(data.elEspecial)
   );
+}
+
+function buildSyncError(
+  code: CabezasSyncError["code"],
+  step: string,
+  message: string,
+  options?: {
+    cached?: boolean;
+    durationMs?: number;
+    details?: CabezasSyncError["details"];
+    cause?: unknown;
+  }
+): CabezasSyncError {
+  const details = { ...options?.details };
+
+  if (options?.cause instanceof Error) {
+    details.errorName = options.cause.name;
+    details.stack = options.cause.stack;
+  }
+
+  if (options?.cause instanceof InstaStoriesViewerError) {
+    details.viewerStep = options.cause.step;
+    details.viewerDetails = options.cause.details;
+  }
+
+  return {
+    message,
+    code,
+    step,
+    cached: options?.cached,
+    durationMs: options?.durationMs,
+    details: Object.keys(details).length > 0 ? details : undefined,
+  };
 }
 
 function shouldSkipRemoteSync(state: CabezasData, force: boolean): boolean {
@@ -50,45 +89,113 @@ function shouldSkipRemoteSync(state: CabezasData, force: boolean): boolean {
   return false;
 }
 
-async function findActiveCabezasStory(): Promise<{
-  imageUrl: string;
-  takenAt: number;
-  extracted: ValidatedCabezas;
-} | null> {
-  const edges = await fetchViewerStories();
-
-  const activeStories = edges
-    .filter(
-      (edge) =>
-        edge.display_url &&
-        !edge.is_video &&
-        typeof edge.taken_at === "number" &&
-        isActiveInstagramStory(edge.taken_at)
-    )
-    .map((edge) => ({
-      imageUrl: buildViewerImageUrl(edge.display_url!),
-      takenAt: edge.taken_at!,
-    }))
-    .sort((a, b) => b.takenAt - a.takenAt);
-
-  for (const story of activeStories) {
-    try {
-      const imageBuffer = await downloadViewerImage(story.imageUrl);
-      const extracted = await extractCabezasFromImage(imageBuffer);
-      if (isValidExtraction(extracted)) {
-        return { ...story, extracted };
-      }
-    } catch {
-      continue;
+async function findActiveCabezasStory(): Promise<
+  | {
+      ok: true;
+      story: {
+        imageUrl: string;
+        takenAt: number;
+        extracted: ValidatedCabezas;
+      };
+      diagnostics: {
+        totalStories: number;
+        activeStories: number;
+        attemptedStories: number;
+        storyAttempts: CabezasStoryAttempt[];
+      };
     }
-  }
+  | {
+      ok: false;
+      diagnostics: {
+        totalStories: number;
+        activeStories: number;
+        attemptedStories: number;
+        storyAttempts: CabezasStoryAttempt[];
+      };
+      cause?: unknown;
+    }
+> {
+  const storyAttempts: CabezasStoryAttempt[] = [];
 
-  return null;
+  try {
+    const edges = await fetchViewerStories();
+    const totalStories = edges.length;
+
+    const activeStories = edges
+      .filter(
+        (edge) =>
+          edge.display_url &&
+          !edge.is_video &&
+          typeof edge.taken_at === "number" &&
+          isActiveInstagramStory(edge.taken_at)
+      )
+      .map((edge) => ({
+        imageUrl: buildViewerImageUrl(edge.display_url!),
+        takenAt: edge.taken_at!,
+      }))
+      .sort((a, b) => b.takenAt - a.takenAt);
+
+    for (const story of activeStories) {
+      try {
+        const imageBuffer = await downloadViewerImage(story.imageUrl);
+        const extracted = await extractCabezasFromImage(imageBuffer);
+        const valid = isValidExtraction(extracted);
+
+        storyAttempts.push({
+          takenAt: story.takenAt,
+          valid,
+          extracted,
+        });
+
+        if (valid) {
+          return {
+            ok: true,
+            story: { ...story, extracted },
+            diagnostics: {
+              totalStories,
+              activeStories: activeStories.length,
+              attemptedStories: storyAttempts.length,
+              storyAttempts,
+            },
+          };
+        }
+      } catch (error) {
+        storyAttempts.push({
+          takenAt: story.takenAt,
+          valid: false,
+          extracted: null,
+          error: error instanceof Error ? error.message : "Error desconocido",
+        });
+      }
+    }
+
+    return {
+      ok: false,
+      diagnostics: {
+        totalStories,
+        activeStories: activeStories.length,
+        attemptedStories: storyAttempts.length,
+        storyAttempts,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostics: {
+        totalStories: 0,
+        activeStories: 0,
+        attemptedStories: storyAttempts.length,
+        storyAttempts,
+      },
+      cause: error,
+    };
+  }
 }
 
 export async function syncCabezasFromInstagram(options?: {
   force?: boolean;
 }): Promise<CabezasSyncResult> {
+  const startedAt = Date.now();
   const force = options?.force ?? false;
   const today = getArgentinaDateKey();
   const current = await readCabezas();
@@ -106,18 +213,33 @@ export async function syncCabezasFromInstagram(options?: {
       ok: false,
       data: current,
       cached: true,
-      error:
+      error: buildSyncError(
+        "retry_wait",
+        "shouldSkipRemoteSync",
         current.foundForDay === false
           ? "Todavía no apareció el story de cabezas de hoy. Reintentá en unos minutos."
           : "Esperando el próximo intento automático de sincronización.",
+        {
+          cached: true,
+          durationMs: Date.now() - startedAt,
+          details: {
+            force,
+            syncDayKey: current.syncDayKey,
+            foundForDay: current.foundForDay,
+            lastSyncAttemptAt: current.lastSyncAttemptAt,
+            retryIntervalMs: RETRY_INTERVAL_MS,
+          },
+        }
+      ),
     };
   }
 
   const attemptAt = new Date().toISOString();
 
   try {
-    const story = await findActiveCabezasStory();
-    if (!story) {
+    const result = await findActiveCabezasStory();
+
+    if (!result.ok) {
       const pending: CabezasData = {
         ...current,
         syncDayKey: today,
@@ -127,14 +249,54 @@ export async function syncCabezasFromInstagram(options?: {
       };
       await writeCabezas(pending);
 
+      if (result.cause) {
+        const message =
+          result.cause instanceof Error
+            ? result.cause.message
+            : "Error al sincronizar desde Instagram";
+
+        return {
+          ok: false,
+          data: pending,
+          error: buildSyncError(
+            "instagram_fetch_failed",
+            result.cause instanceof InstaStoriesViewerError
+              ? result.cause.step
+              : "fetchViewerStories",
+            message,
+            {
+              durationMs: Date.now() - startedAt,
+              cause: result.cause,
+              details: {
+                force,
+                syncDayKey: today,
+                ...result.diagnostics,
+              },
+            }
+          ),
+        };
+      }
+
       return {
         ok: false,
         data: pending,
-        error:
+        error: buildSyncError(
+          "story_not_found",
+          "findActiveCabezasStory",
           "No se encontró el story de cabezas de hoy entre las historias activas.",
+          {
+            durationMs: Date.now() - startedAt,
+            details: {
+              force,
+              syncDayKey: today,
+              ...result.diagnostics,
+            },
+          }
+        ),
       };
     }
 
+    const { story } = result;
     const { extracted } = story;
 
     const data: CabezasData = {
@@ -174,7 +336,21 @@ export async function syncCabezasFromInstagram(options?: {
 
     return {
       ok: false,
-      error: message,
+      error: buildSyncError(
+        "unexpected_error",
+        "syncCabezasFromInstagram",
+        message,
+        {
+          durationMs: Date.now() - startedAt,
+          cause: error,
+          details: {
+            force,
+            syncDayKey: today,
+            foundForDay: failed.foundForDay,
+            lastSyncAttemptAt: attemptAt,
+          },
+        }
+      ),
       data: failed,
     };
   }

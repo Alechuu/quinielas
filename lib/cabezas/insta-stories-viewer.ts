@@ -3,6 +3,9 @@ const IMG_CDN = "https://cdn.insta-stories-viewer.com/img.php?url=";
 const USERNAME = "agenciapuntoybanca";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+const SEARCH_POLL_DEADLINE_MS = 45_000;
+const SEARCH_SESSION_RETRIES = 3;
+const SESSION_RETRY_DELAY_MS = 750;
 
 export interface ViewerStoryMedia {
   imageUrl: string;
@@ -25,8 +28,32 @@ interface ViewerSearchResult {
   };
 }
 
+export class InstaStoriesViewerError extends Error {
+  step: string;
+  details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    step: string,
+    details?: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = "InstaStoriesViewerError";
+    this.step = step;
+    this.details = details;
+  }
+}
+
 function randomTag(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+function isSessionExpiredStatus(status: number): boolean {
+  return status === 400 || status === 410;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchConnectToken(): Promise<string> {
@@ -37,28 +64,41 @@ async function fetchConnectToken(): Promise<string> {
     });
 
     if (response.status === 429 && attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      await delay(2000 * (attempt + 1));
       continue;
     }
 
     if (!response.ok) {
-      throw new Error(
-        `No se pudo conectar con insta-stories-viewer (${response.status})`
+      throw new InstaStoriesViewerError(
+        `No se pudo conectar con insta-stories-viewer (${response.status})`,
+        "fetchConnectToken",
+        { status: response.status, attempt }
       );
     }
 
     const json = (await response.json()) as { token?: string };
     if (!json.token) {
-      throw new Error("insta-stories-viewer no devolvió token");
+      throw new InstaStoriesViewerError(
+        "insta-stories-viewer no devolvió token",
+        "fetchConnectToken"
+      );
     }
 
     return json.token;
   }
 
-  throw new Error("No se pudo conectar con insta-stories-viewer (429)");
+  throw new InstaStoriesViewerError(
+    "No se pudo conectar con insta-stories-viewer (429)",
+    "fetchConnectToken",
+    { status: 429 }
+  );
 }
 
-async function socketGet(sid?: string, tag = randomTag()): Promise<string> {
+async function socketGet(
+  step: string,
+  sid?: string,
+  tag = randomTag()
+): Promise<string> {
   const url = sid
     ? `${BASE_URL}/socket.io/?EIO=4&transport=polling&sid=${sid}&t=${tag}`
     : `${BASE_URL}/socket.io/?EIO=4&transport=polling&t=${tag}`;
@@ -69,13 +109,27 @@ async function socketGet(sid?: string, tag = randomTag()): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(`Socket polling falló (${response.status})`);
+    throw new InstaStoriesViewerError(
+      `Socket polling falló (${response.status})`,
+      step,
+      {
+        method: "GET",
+        status: response.status,
+        tag,
+        sid: sid?.slice(0, 12),
+      }
+    );
   }
 
   return response.text();
 }
 
-async function socketPost(sid: string, body: string, tag = randomTag()): Promise<void> {
+async function socketPost(
+  step: string,
+  sid: string,
+  body: string,
+  tag = randomTag()
+): Promise<void> {
   const response = await fetch(
     `${BASE_URL}/socket.io/?EIO=4&transport=polling&sid=${sid}&t=${tag}`,
     {
@@ -90,14 +144,27 @@ async function socketPost(sid: string, body: string, tag = randomTag()): Promise
   );
 
   if (!response.ok) {
-    throw new Error(`Socket post falló (${response.status})`);
+    throw new InstaStoriesViewerError(
+      `Socket post falló (${response.status})`,
+      step,
+      {
+        method: "POST",
+        status: response.status,
+        tag,
+        sid: sid.slice(0, 12),
+        bodyLength: body.length,
+      }
+    );
   }
 }
 
 function extractSocketSid(handshake: string): string {
   const match = handshake.match(/"sid":"([^"]+)"/);
   if (!match?.[1]) {
-    throw new Error("No se pudo abrir sesión socket con insta-stories-viewer");
+    throw new InstaStoriesViewerError(
+      "No se pudo abrir sesión socket con insta-stories-viewer",
+      "socketHandshake"
+    );
   }
   return match[1];
 }
@@ -126,34 +193,58 @@ function parseSearchResultPayload(packet: string): ViewerSearchResult | null {
 }
 
 async function searchStories(token: string): Promise<ViewerStoryEdge[]> {
-  const handshake = await socketGet();
+  const handshake = await socketGet("socketHandshake");
   const sid = extractSocketSid(handshake);
 
-  await socketPost(sid, "40", "connect");
-  await socketGet(sid, "ack");
+  await socketPost("socketConnect", sid, "40", "connect");
+  await socketGet("socketAck", sid, "ack");
 
   const searchPayload = `42["search",${JSON.stringify({
     username: USERNAME,
     date: Date.now(),
     token,
   })}]`;
-  await socketPost(sid, searchPayload, "search");
+  await socketPost("socketSearch", sid, searchPayload, "search");
 
-  for (let attempt = 0; attempt < 12; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const packet = await socketGet(sid, `wait${attempt}`);
+  const startedAt = Date.now();
+  let pollAttempt = 0;
+
+  while (Date.now() - startedAt < SEARCH_POLL_DEADLINE_MS) {
+    if (pollAttempt > 0) {
+      await delay(700);
+    }
+
+    const packet = await socketGet(
+      "socketPoll",
+      sid,
+      `wait${pollAttempt}`
+    );
+
+    pollAttempt++;
+
     const result = parseSearchResultPayload(packet);
     if (!result) continue;
 
     if (result.data?.status !== "success") {
-      throw new Error("insta-stories-viewer no pudo leer las historias");
+      throw new InstaStoriesViewerError(
+        "insta-stories-viewer no pudo leer las historias",
+        "socketSearchResult",
+        { status: result.data?.status }
+      );
     }
 
     const user = result.data.user;
     return user?.reels?.length ? user.reels : (user?.edges ?? []);
   }
 
-  throw new Error("Timeout esperando historias de insta-stories-viewer");
+  throw new InstaStoriesViewerError(
+    "Timeout esperando historias de insta-stories-viewer",
+    "socketPoll",
+    {
+      pollAttempts: pollAttempt,
+      deadlineMs: SEARCH_POLL_DEADLINE_MS,
+    }
+  );
 }
 
 export function buildViewerImageUrl(displayUrl: string): string {
@@ -161,8 +252,31 @@ export function buildViewerImageUrl(displayUrl: string): string {
 }
 
 export async function fetchViewerStories(): Promise<ViewerStoryEdge[]> {
-  const token = await fetchConnectToken();
-  return searchStories(token);
+  let lastError: unknown;
+
+  for (let session = 0; session < SEARCH_SESSION_RETRIES; session++) {
+    try {
+      const token = await fetchConnectToken();
+      return await searchStories(token);
+    } catch (error) {
+      lastError = error;
+
+      const status =
+        error instanceof InstaStoriesViewerError &&
+        typeof error.details?.status === "number"
+          ? error.details.status
+          : null;
+
+      if (status && isSessionExpiredStatus(status) && session < SEARCH_SESSION_RETRIES - 1) {
+        await delay(SESSION_RETRY_DELAY_MS);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError;
 }
 
 export async function downloadViewerImage(imageUrl: string): Promise<Buffer> {
@@ -175,7 +289,11 @@ export async function downloadViewerImage(imageUrl: string): Promise<Buffer> {
   });
 
   if (!response.ok) {
-    throw new Error("No se pudo descargar la imagen del story");
+    throw new InstaStoriesViewerError(
+      "No se pudo descargar la imagen del story",
+      "downloadViewerImage",
+      { status: response.status }
+    );
   }
 
   return Buffer.from(await response.arrayBuffer());

@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { getCabezasState, syncCabezasFromInstagram } from "@/lib/cabezas/sync";
 import { writeCabezas } from "@/lib/cabezas/storage";
-import type { CabezasData } from "@/lib/cabezas/types";
+import type { CabezasData, CabezasSyncError } from "@/lib/cabezas/types";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+function fallbackSyncError(message: string): CabezasSyncError {
+  return {
+    message,
+    code: "unexpected_error",
+    step: "api/cabezas",
+  };
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -13,14 +22,20 @@ export async function GET(request: Request) {
     const force = url.searchParams.get("force") === "1";
     const result = await syncCabezasFromInstagram({ force });
     if (result.ok && result.data) {
-      return NextResponse.json(result.data);
+      return NextResponse.json({
+        ...result.data,
+        syncOk: true,
+        extracted: result.extracted,
+      });
     }
 
     const fallback = await getCabezasState();
     return NextResponse.json({
       ...fallback,
-      syncError: result.error ?? "No se pudo sincronizar",
+      syncOk: false,
+      syncError: result.error ?? fallbackSyncError("No se pudo sincronizar"),
       extracted: result.extracted,
+      cached: result.cached ?? false,
     });
   }
 
