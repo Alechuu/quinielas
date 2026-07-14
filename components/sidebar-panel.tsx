@@ -7,6 +7,7 @@ import { RefreshCw, Sun, Cloud, CloudSun, CloudFog, CloudDrizzle, CloudRain, Sno
 const API_URL = "/api/cabezas";
 const AUTO_SYNC_INTERVAL = 60 * 60 * 1000;
 const MANUAL_OVERRIDE_KEY = "cabezasManualOverrideDate";
+const CABEZAS_SYNC_DAY_KEY = "cabezasSyncDayKey";
 
 import type { CabezasSyncError } from "@/lib/cabezas/types";
 
@@ -16,8 +17,37 @@ interface CabezasResponse {
   elEspecial?: string;
   source?: "instagram" | "manual";
   updatedAt?: string;
+  syncDayKey?: string;
+  foundForDay?: boolean;
   syncOk?: boolean;
   syncError?: CabezasSyncError;
+}
+
+function hasValidCabezasNumbers(values: {
+  numerazo: string;
+  laFija: string;
+  elEspecial: string;
+}): boolean {
+  return (
+    /^\d{4}$/.test(values.numerazo) &&
+    /^\d{3}$/.test(values.laFija) &&
+    /^\d{2}$/.test(values.elEspecial)
+  );
+}
+
+function isCabezasSyncedForToday(): boolean {
+  return localStorage.getItem(CABEZAS_SYNC_DAY_KEY) === getArgentinaDateKey();
+}
+
+function markCabezasSyncedForToday(): void {
+  localStorage.setItem(CABEZAS_SYNC_DAY_KEY, getArgentinaDateKey());
+}
+
+function clearStaleCabezasSyncMarker(): void {
+  const syncedDay = localStorage.getItem(CABEZAS_SYNC_DAY_KEY);
+  if (syncedDay && syncedDay !== getArgentinaDateKey()) {
+    localStorage.removeItem(CABEZAS_SYNC_DAY_KEY);
+  }
 }
 
 function getArgentinaDateKey(): string {
@@ -285,6 +315,20 @@ export function SidebarPanel({
 
         const data = (await response.json()) as CabezasResponse;
 
+        if (
+          sync &&
+          data.syncOk !== false &&
+          data.source === "instagram" &&
+          data.syncDayKey === getArgentinaDateKey() &&
+          hasValidCabezasNumbers({
+            numerazo: data.numerazo ?? "",
+            laFija: data.laFija ?? "",
+            elEspecial: data.elEspecial ?? "",
+          })
+        ) {
+          markCabezasSyncedForToday();
+        }
+
         if (!hasManualOverrideToday() || force) {
           applyCabezasToState(data, setNumerazo, setLaFija, setElEspecial);
         }
@@ -300,6 +344,8 @@ export function SidebarPanel({
   );
 
   useEffect(() => {
+    clearStaleCabezasSyncMarker();
+
     const numerazoGuardado = localStorage.getItem("numerazo") || "";
     const laFijaGuardada = localStorage.getItem("laFija") || "";
     const elEspecialGuardado = localStorage.getItem("elEspecial") || "";
@@ -309,16 +355,32 @@ export function SidebarPanel({
     setElEspecial(elEspecialGuardado);
     manualOverrideRef.current = hasManualOverrideToday();
 
-    loadFromApi(true);
+    const hasLocalData = hasValidCabezasNumbers({
+      numerazo: numerazoGuardado,
+      laFija: laFijaGuardada,
+      elEspecial: elEspecialGuardado,
+    });
+
+    if (hasManualOverrideToday()) {
+      return;
+    }
+
+    if (isCabezasSyncedForToday() && hasLocalData) {
+      return;
+    }
+
+    void loadFromApi(true);
   }, [hasManualOverrideToday, loadFromApi]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      loadFromApi(true);
+      if (hasManualOverrideToday()) return;
+      if (isCabezasSyncedForToday()) return;
+      void loadFromApi(true);
     }, AUTO_SYNC_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [loadFromApi]);
+  }, [hasManualOverrideToday, loadFromApi]);
 
   const handleNumerazoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const valor = e.target.value;
@@ -352,6 +414,7 @@ export function SidebarPanel({
 
   const handleRefresh = () => {
     localStorage.removeItem(MANUAL_OVERRIDE_KEY);
+    localStorage.removeItem(CABEZAS_SYNC_DAY_KEY);
     manualOverrideRef.current = false;
     void loadFromApi(true, true);
   };

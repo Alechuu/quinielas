@@ -64,6 +64,11 @@ function buildSyncError(
   };
 }
 
+// Cache policy:
+// - Fetch from Instagram at most once per Argentina calendar day after a successful sync.
+// - Failed attempts are retried at most once per hour.
+// - A new Argentina day clears the daily cache and allows a fresh fetch.
+// - On Vercel, server state is in-memory only; the client keeps the daily cache marker.
 function shouldSkipRemoteSync(state: CabezasData, force: boolean): boolean {
   if (force) return false;
 
