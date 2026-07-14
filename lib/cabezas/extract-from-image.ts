@@ -142,8 +142,14 @@ export async function extractCabezasFromImage(
       500
     ).then(enhanceForOcr);
 
-    const [numerazoResult, fijaResult, especialResult] = await Promise.all([
-      worker.recognize(numerazoBuffer),
+    const numerazoResult = await worker.recognize(numerazoBuffer);
+
+    await worker.setParameters({
+      tessedit_char_whitelist: "0123456789",
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
+    });
+
+    const [fijaResult, especialResult] = await Promise.all([
       worker.recognize(fijaBuffer),
       worker.recognize(especialBuffer),
     ]);
