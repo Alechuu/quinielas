@@ -7,7 +7,8 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test:cabezas": "tsx scripts/test-cabezas-sync.ts"
+    "test:cabezas": "tsx scripts/test-cabezas-sync.ts",
+    "test:alert": "tsx scripts/test-ntfy-alert.ts"
   },
   "dependencies": {
     "@fontsource/dseg7-classic": "^5.2.5",

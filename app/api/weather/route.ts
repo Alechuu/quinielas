@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { notifyApiFailure } from "@/lib/alerts/notify-api-failure";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ export async function GET() {
     );
 
     if (!response.ok) {
-      throw new Error("No se pudo obtener el clima");
+      throw new Error(`Open-Meteo respondió HTTP ${response.status}`);
     }
 
     const data = (await response.json()) as OpenMeteoResponse;
@@ -58,10 +59,10 @@ export async function GET() {
       description:
         weatherCode !== undefined ? getWeatherDescription(weatherCode) : null,
     });
-  } catch {
-    return NextResponse.json(
-      { error: "No se pudo cargar el clima" },
-      { status: 502 }
-    );
+  } catch (error) {
+    const detail =
+      error instanceof Error ? error.message : "No se pudo cargar el clima";
+    notifyApiFailure("weather", detail);
+    return NextResponse.json({ error: "No se pudo cargar el clima" }, { status: 502 });
   }
 }

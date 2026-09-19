@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
+import { notifyApiFailure } from "@/lib/alerts/notify-api-failure";
 
 /* =========================
    TYPES
@@ -250,6 +251,13 @@ function emptyParsedData(): ParsedData {
   };
 }
 
+function parsedDataHasValues(data: ParsedData): boolean {
+  for (const sorteo of Object.values(data)) {
+    if (Object.keys(sorteo).length > 0) return true;
+  }
+  return false;
+}
+
 /* =========================
    NOTITIMBA PARSER
 ========================= */
@@ -454,7 +462,29 @@ export async function GET(request: Request) {
 
     const { staticHtml, ajaxHtml } = await fetchNotitimbaData();
 
+    if (!ajaxHtml) {
+      notifyApiFailure(
+        "quiniela",
+        "Notitimba: sin respuesta AJAX (sitio caído o bloqueo)"
+      );
+      return NextResponse.json(
+        { error: "No se pudo obtener la quiniela" },
+        { status: 502 }
+      );
+    }
+
     const dataHoy = parseNotitimbaResponse(ajaxHtml);
+
+    if (!parsedDataHasValues(dataHoy)) {
+      notifyApiFailure(
+        "quiniela",
+        "Notitimba: respuesta sin tablas qTbl (¿cambió el HTML/API?)"
+      );
+      return NextResponse.json(
+        { error: "Datos de quiniela incompletos" },
+        { status: 502 }
+      );
+    }
 
     const dataAyer = emptyParsedData();
     const nocturnaAyer = parseNotitimbaNocturnaAyer(staticHtml, now);
@@ -469,6 +499,8 @@ export async function GET(request: Request) {
     return NextResponse.json(response);
   } catch (e) {
     console.error(e);
+    const detail = e instanceof Error ? e.message : "Error quiniela";
+    notifyApiFailure("quiniela", detail);
 
     return NextResponse.json({ error: "Error quiniela" }, { status: 500 });
   }
