@@ -1,4 +1,8 @@
-import { getArgentinaDateKey, isActiveInstagramStory } from "@/lib/cabezas/date";
+import {
+  getArgentinaDateKey,
+  isActiveInstagramStory,
+  isUnixTimestampOnArgentinaDay,
+} from "@/lib/cabezas/date";
 import {
   extractCabezasFromImage,
   isValidExtraction,
@@ -9,6 +13,7 @@ import {
   downloadViewerImage,
   fetchViewerStories,
   InstaStoriesViewerError,
+  type ViewerStoryEdge,
 } from "@/lib/cabezas/insta-stories-viewer";
 import { readCabezas, writeCabezas } from "@/lib/cabezas/storage";
 import type {
@@ -19,6 +24,27 @@ import type {
 } from "@/lib/cabezas/types";
 
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Viewer reels often omit `taken_at`; treat those as the current active batch. */
+function storyTakenAtSeconds(edge: ViewerStoryEdge, index: number): number {
+  if (typeof edge.taken_at === "number" && edge.taken_at > 0) {
+    return edge.taken_at;
+  }
+  return Math.floor(Date.now() / 1000) - index;
+}
+
+function isEligibleCabezasStory(edge: ViewerStoryEdge, takenAt: number): boolean {
+  if (!edge.display_url || edge.is_video) return false;
+
+  if (typeof edge.taken_at === "number") {
+    return (
+      isActiveInstagramStory(edge.taken_at) &&
+      isUnixTimestampOnArgentinaDay(edge.taken_at)
+    );
+  }
+
+  return true;
+}
 
 function hasValidNumbers(data: CabezasData): boolean {
   return Boolean(
@@ -127,16 +153,14 @@ async function findActiveCabezasStory(): Promise<
     const totalStories = edges.length;
 
     const activeStories = edges
-      .filter(
-        (edge) =>
-          edge.display_url &&
-          !edge.is_video &&
-          typeof edge.taken_at === "number" &&
-          isActiveInstagramStory(edge.taken_at)
-      )
-      .map((edge) => ({
+      .map((edge, index) => ({
+        edge,
+        takenAt: storyTakenAtSeconds(edge, index),
+      }))
+      .filter(({ edge, takenAt }) => isEligibleCabezasStory(edge, takenAt))
+      .map(({ edge, takenAt }) => ({
         imageUrl: buildViewerImageUrl(edge.display_url!),
-        takenAt: edge.taken_at!,
+        takenAt,
       }))
       .sort((a, b) => b.takenAt - a.takenAt);
 

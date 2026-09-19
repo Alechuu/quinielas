@@ -330,7 +330,15 @@ export function SidebarPanel({
         }
 
         if (!hasManualOverrideToday() || force) {
-          applyCabezasToState(data, setNumerazo, setLaFija, setElEspecial);
+          const responseHasValidNumbers = hasValidCabezasNumbers({
+            numerazo: data.numerazo ?? "",
+            laFija: data.laFija ?? "",
+            elEspecial: data.elEspecial ?? "",
+          });
+          // Failed sync on Vercel returns empty in-memory state; don't wipe local cache.
+          if (data.syncOk !== false || responseHasValidNumbers) {
+            applyCabezasToState(data, setNumerazo, setLaFija, setElEspecial);
+          }
         }
       } catch {
         // La edición manual sigue disponible aunque falle la sincronización.

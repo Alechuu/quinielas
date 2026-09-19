@@ -12,7 +12,7 @@ export interface ViewerStoryMedia {
   takenAt: number;
 }
 
-interface ViewerStoryEdge {
+export interface ViewerStoryEdge {
   display_url?: string;
   taken_at?: number;
   is_video?: boolean | null;
