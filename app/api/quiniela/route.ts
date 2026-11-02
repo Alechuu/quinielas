@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { notifyApiFailure } from "@/lib/alerts/notify-api-failure";
+import { notitimbaFetch } from "@/lib/quiniela/notitimba-fetch";
 
 /* =========================
    TYPES
@@ -178,6 +179,7 @@ function getDebugNowFromRequest(request: Request): Date | null {
 interface NotitimbaFetchResult {
   staticHtml: string | null; // Full page HTML (contains historical tables like #Unoct)
   ajaxHtml: string | null; // AJAX response (today's results in qTbl tables)
+  error?: string;
 }
 
 // Fetches notitimba in two steps:
@@ -194,8 +196,7 @@ async function fetchNotitimbaData(): Promise<NotitimbaFetchResult> {
 
   try {
     // Step 1: Visit the page to establish a session and get cookies + static HTML
-    const pageRes = await fetch(URL_NOTITIMBA, {
-      cache: "no-store",
+    const pageRes = await notitimbaFetch(URL_NOTITIMBA, {
       headers,
     });
 
@@ -211,8 +212,7 @@ async function fetchNotitimbaData(): Promise<NotitimbaFetchResult> {
 
     // Step 2: Fetch the AJAX endpoint with session cookies
     // v=1 forces the traditional results view (instead of live "sorteo virtual")
-    const ajaxRes = await fetch(URL_NOTITIMBA_AJAX, {
-      cache: "no-store",
+    const ajaxRes = await notitimbaFetch(URL_NOTITIMBA_AJAX, {
       headers: {
         ...headers,
         Accept: "*/*",
@@ -226,8 +226,9 @@ async function fetchNotitimbaData(): Promise<NotitimbaFetchResult> {
 
     return { staticHtml, ajaxHtml };
   } catch (e) {
+    const detail = e instanceof Error ? e.message : "Error de red";
     console.error("[Quiniela] Fetch error (notitimba):", e);
-    return { staticHtml: null, ajaxHtml: null };
+    return { staticHtml: null, ajaxHtml: null, error: detail };
   }
 }
 
@@ -460,12 +461,14 @@ export async function GET(request: Request) {
   try {
     const now = getDebugNowFromRequest(request) ?? getArgentinaTime();
 
-    const { staticHtml, ajaxHtml } = await fetchNotitimbaData();
+    const { staticHtml, ajaxHtml, error } = await fetchNotitimbaData();
 
     if (!ajaxHtml) {
       notifyApiFailure(
         "quiniela",
-        "Notitimba: sin respuesta AJAX (sitio caído o bloqueo)"
+        error
+          ? `Notitimba: sin respuesta AJAX (${error})`
+          : "Notitimba: sin respuesta AJAX (sitio caído o bloqueo)"
       );
       return NextResponse.json(
         { error: "No se pudo obtener la quiniela" },
