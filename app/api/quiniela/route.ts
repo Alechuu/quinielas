@@ -282,6 +282,11 @@ function matchNotitimbaProvince(text: string): ProvinciaKeyInternal | null {
   return null;
 }
 
+// Santa Fe's Saturday nocturna is 5 digits (for example 32210). Other draws are 4.
+function isQuinielaNumber(text: string): boolean {
+  return /^\d{4,5}$/.test(text);
+}
+
 // Check if a sorteo should have completed by now (past its time + 15-min grace)
 function isSorteoPastDeadline(sorteo: SorteoKeyInternal, now: Date): boolean {
   const deadline = SORTEO_DEADLINE[sorteo];
@@ -323,7 +328,7 @@ function parseNotitimbaResponse(html: string | null): ParsedData {
             const numDiv = $(cell).find(".qTDc");
             if (numDiv.length > 0) {
               const text = numDiv.text().trim();
-              if (/^\d{4}$/.test(text)) {
+              if (isQuinielaNumber(text)) {
                 data[sorteo][provinciaKey] = text;
               }
             }
@@ -373,7 +378,7 @@ function parseNotitimbaNocturnaAyer(
         const onclick = $(cell).attr("onclick") || "";
         if (onclick.includes(ayerDate)) {
           const text = $(cell).text().trim();
-          if (/^\d{4}$/.test(text)) {
+          if (isQuinielaNumber(text)) {
             result[provinciaKey] = text;
           }
           return false;

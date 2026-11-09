@@ -66,10 +66,13 @@ function QuinielaNumero({
   }, [value]);
 
   const display = showPlaceholder ? "----" : value;
+  const wide = display.length > 4;
 
   return (
     <div
-      className={`text-5xl font-black drop-shadow-lg ${
+      className={`whitespace-nowrap font-black tabular-nums leading-none drop-shadow-lg ${
+        wide ? "text-4xl" : "text-5xl"
+      } ${
         showPlaceholder ? "animate-pulse text-slate-400" : "text-white"
       } ${animate ? "animate-numero-change" : ""}`}
     >
