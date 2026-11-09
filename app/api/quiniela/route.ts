@@ -334,6 +334,16 @@ function parseNotitimbaResponse(html: string | null): ParsedData {
   return data;
 }
 
+// Sunday has no draw, so on Monday the previous nocturna is Saturday's.
+function getPreviousNocturnaDate(now: Date): Date {
+  const previous = new Date(now);
+  previous.setDate(previous.getDate() - 1);
+  if (previous.getDay() === 0) {
+    previous.setDate(previous.getDate() - 1);
+  }
+  return previous;
+}
+
 // Parse yesterday's nocturna from the static notitimba page.
 // The #Unoct table has historical nocturna draws with dates in onclick attrs:
 // <td onclick="prm('YYYY-MM-DD',idx,4)">NUMBER</td>
@@ -345,9 +355,7 @@ function parseNotitimbaNocturnaAyer(
   if (!staticHtml) return result as Record<ProvinciaKeyInternal, string | undefined>;
 
   const $ = cheerio.load(staticHtml);
-  const ayer = new Date(now);
-  ayer.setDate(ayer.getDate() - 1);
-  const ayerDate = getDateString(ayer);
+  const ayerDate = getDateString(getPreviousNocturnaDate(now));
 
   const table = $("#Unoct");
   if (table.length === 0) return result as Record<ProvinciaKeyInternal, string | undefined>;
@@ -385,8 +393,7 @@ function transformToTableFormat(
   dataAyer: ParsedData,
   now: Date
 ): QuinielaResponse {
-  const ayer = new Date(now);
-  ayer.setDate(ayer.getDate() - 1);
+  const ayer = getPreviousNocturnaDate(now);
 
   const result: QuinielaResponse = {
     fecha: getFechaString(now),
