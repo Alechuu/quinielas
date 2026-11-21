@@ -23,6 +23,7 @@ const nextConfig = {
     "tesseract.js-core",
     "bmp-js",
     "wasm-feature-detect",
+    "sharp",
   ],
   outputFileTracingIncludes: {
     "/api/cabezas": tesseractRuntimeDeps,

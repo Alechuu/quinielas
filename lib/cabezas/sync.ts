@@ -13,6 +13,7 @@ import {
   downloadViewerImage,
   fetchViewerStories,
   InstaStoriesViewerError,
+  withInstagramViewer,
   type ViewerStoryEdge,
 } from "@/lib/cabezas/insta-stories-viewer";
 import { readCabezas, writeCabezas } from "@/lib/cabezas/storage";
@@ -149,64 +150,66 @@ async function findActiveCabezasStory(): Promise<
   const storyAttempts: CabezasStoryAttempt[] = [];
 
   try {
-    const edges = await fetchViewerStories();
-    const totalStories = edges.length;
+    return await withInstagramViewer(async (client) => {
+      const edges = await fetchViewerStories(client);
+      const totalStories = edges.length;
 
-    const activeStories = edges
-      .map((edge, index) => ({
-        edge,
-        takenAt: storyTakenAtSeconds(edge, index),
-      }))
-      .filter(({ edge, takenAt }) => isEligibleCabezasStory(edge, takenAt))
-      .map(({ edge, takenAt }) => ({
-        imageUrl: buildViewerImageUrl(edge.display_url!),
-        takenAt,
-      }))
-      .sort((a, b) => b.takenAt - a.takenAt);
+      const activeStories = edges
+        .map((edge, index) => ({
+          edge,
+          takenAt: storyTakenAtSeconds(edge, index),
+        }))
+        .filter(({ edge, takenAt }) => isEligibleCabezasStory(edge, takenAt))
+        .map(({ edge, takenAt }) => ({
+          imageUrl: buildViewerImageUrl(edge.display_url!),
+          takenAt,
+        }))
+        .sort((a, b) => b.takenAt - a.takenAt);
 
-    for (const story of activeStories) {
-      try {
-        const imageBuffer = await downloadViewerImage(story.imageUrl);
-        const extracted = await extractCabezasFromImage(imageBuffer);
-        const valid = isValidExtraction(extracted);
+      for (const story of activeStories) {
+        try {
+          const imageBuffer = await downloadViewerImage(client, story.imageUrl);
+          const extracted = await extractCabezasFromImage(imageBuffer);
+          const valid = isValidExtraction(extracted);
 
-        storyAttempts.push({
-          takenAt: story.takenAt,
-          valid,
-          extracted,
-        });
+          storyAttempts.push({
+            takenAt: story.takenAt,
+            valid,
+            extracted,
+          });
 
-        if (valid) {
-          return {
-            ok: true,
-            story: { ...story, extracted },
-            diagnostics: {
-              totalStories,
-              activeStories: activeStories.length,
-              attemptedStories: storyAttempts.length,
-              storyAttempts,
-            },
-          };
+          if (valid) {
+            return {
+              ok: true as const,
+              story: { ...story, extracted },
+              diagnostics: {
+                totalStories,
+                activeStories: activeStories.length,
+                attemptedStories: storyAttempts.length,
+                storyAttempts,
+              },
+            };
+          }
+        } catch (error) {
+          storyAttempts.push({
+            takenAt: story.takenAt,
+            valid: false,
+            extracted: null,
+            error: error instanceof Error ? error.message : "Error desconocido",
+          });
         }
-      } catch (error) {
-        storyAttempts.push({
-          takenAt: story.takenAt,
-          valid: false,
-          extracted: null,
-          error: error instanceof Error ? error.message : "Error desconocido",
-        });
       }
-    }
 
-    return {
-      ok: false,
-      diagnostics: {
-        totalStories,
-        activeStories: activeStories.length,
-        attemptedStories: storyAttempts.length,
-        storyAttempts,
-      },
-    };
+      return {
+        ok: false as const,
+        diagnostics: {
+          totalStories,
+          activeStories: activeStories.length,
+          attemptedStories: storyAttempts.length,
+          storyAttempts,
+        },
+      };
+    });
   } catch (error) {
     return {
       ok: false,
