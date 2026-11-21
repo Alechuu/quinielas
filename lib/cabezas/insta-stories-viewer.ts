@@ -1,11 +1,18 @@
+import {
+  VIEWER_USER_AGENT,
+  ViewerHttpClient,
+  withViewerClient,
+} from "@/lib/cabezas/viewer-http";
+
 const BASE_URL = "https://insta-stories-viewer.com";
 const IMG_CDN = "https://cdn.insta-stories-viewer.com/img.php?url=";
 const USERNAME = "agenciapuntoybanca";
-const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
+const USER_AGENT = VIEWER_USER_AGENT;
 const SEARCH_POLL_DEADLINE_MS = 45_000;
 const SEARCH_SESSION_RETRIES = 3;
 const SESSION_RETRY_DELAY_MS = 750;
+const IMAGE_DOWNLOAD_RETRIES = 3;
+const IMAGE_DOWNLOAD_TIMEOUT_MS = 45_000;
 
 export interface ViewerStoryMedia {
   imageUrl: string;
@@ -56,11 +63,33 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchConnectToken(): Promise<string> {
+function parseSearchResultPayload(packet: string): ViewerSearchResult | null {
+  const marker = '["searchResult",';
+  const start = packet.indexOf(marker);
+  if (start === -1) return null;
+
+  const jsonStart = packet.indexOf("{", start);
+  if (jsonStart === -1) return null;
+
+  let depth = 0;
+  for (let i = jsonStart; i < packet.length; i++) {
+    const char = packet[i];
+    if (char === "{") depth++;
+    if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        return JSON.parse(packet.slice(jsonStart, i + 1)) as ViewerSearchResult;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function fetchConnectToken(client: ViewerHttpClient): Promise<string> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await fetch(`${BASE_URL}/connect/`, {
+    const response = await client.fetch(`${BASE_URL}/connect/`, {
       cache: "no-store",
-      headers: { "User-Agent": USER_AGENT },
     });
 
     if (response.status === 429 && attempt < 2) {
@@ -95,6 +124,7 @@ async function fetchConnectToken(): Promise<string> {
 }
 
 async function socketGet(
+  client: ViewerHttpClient,
   step: string,
   sid?: string,
   tag = randomTag()
@@ -103,10 +133,7 @@ async function socketGet(
     ? `${BASE_URL}/socket.io/?EIO=4&transport=polling&sid=${sid}&t=${tag}`
     : `${BASE_URL}/socket.io/?EIO=4&transport=polling&t=${tag}`;
 
-  const response = await fetch(url, {
-    cache: "no-store",
-    headers: { "User-Agent": USER_AGENT },
-  });
+  const response = await client.fetch(url, { cache: "no-store" });
 
   if (!response.ok) {
     throw new InstaStoriesViewerError(
@@ -125,18 +152,18 @@ async function socketGet(
 }
 
 async function socketPost(
+  client: ViewerHttpClient,
   step: string,
   sid: string,
   body: string,
   tag = randomTag()
 ): Promise<void> {
-  const response = await fetch(
+  const response = await client.fetch(
     `${BASE_URL}/socket.io/?EIO=4&transport=polling&sid=${sid}&t=${tag}`,
     {
       method: "POST",
       cache: "no-store",
       headers: {
-        "User-Agent": USER_AGENT,
         "Content-Type": "text/plain;charset=UTF-8",
       },
       body,
@@ -156,6 +183,9 @@ async function socketPost(
       }
     );
   }
+
+  // Drain the response so the polling transport keeps the session sticky.
+  await response.text();
 }
 
 function extractSocketSid(handshake: string): string {
@@ -169,42 +199,76 @@ function extractSocketSid(handshake: string): string {
   return match[1];
 }
 
-function parseSearchResultPayload(packet: string): ViewerSearchResult | null {
-  const marker = '["searchResult",';
-  const start = packet.indexOf(marker);
-  if (start === -1) return null;
-
-  const jsonStart = packet.indexOf("{", start);
-  if (jsonStart === -1) return null;
-
-  let depth = 0;
-  for (let i = jsonStart; i < packet.length; i++) {
-    const char = packet[i];
-    if (char === "{") depth++;
-    if (char === "}") {
-      depth--;
-      if (depth === 0) {
-        return JSON.parse(packet.slice(jsonStart, i + 1)) as ViewerSearchResult;
-      }
+async function respondToEngineIoPackets(
+  client: ViewerHttpClient,
+  sid: string,
+  packet: string
+): Promise<void> {
+  for (const part of packet.split("\x1e").filter(Boolean)) {
+    if (part === "2" || part.startsWith("2")) {
+      await socketPost(client, "socketPong", sid, "3", `pong${Date.now()}`);
     }
   }
-
-  return null;
 }
 
-async function searchStories(token: string): Promise<ViewerStoryEdge[]> {
-  const handshake = await socketGet("socketHandshake");
+function isSocketConnected(packet: string): boolean {
+  return packet.includes('40{"sid"') || packet.startsWith("40{");
+}
+
+async function waitForSocketConnect(
+  client: ViewerHttpClient,
+  sid: string
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt > 0) {
+      await delay(250);
+    }
+
+    try {
+      const packet = await socketGet(
+        client,
+        "socketConnectAck",
+        sid,
+        `cack${attempt}`
+      );
+
+      if (isSocketConnected(packet)) {
+        return;
+      }
+
+      await respondToEngineIoPackets(client, sid, packet);
+    } catch (error) {
+      const status =
+        error instanceof InstaStoriesViewerError &&
+        typeof error.details?.status === "number"
+          ? error.details.status
+          : null;
+
+      if (status === 400 || status === 410) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
+async function searchStories(
+  client: ViewerHttpClient,
+  token: string
+): Promise<ViewerStoryEdge[]> {
+  const handshake = await socketGet(client, "socketHandshake");
   const sid = extractSocketSid(handshake);
 
-  await socketPost("socketConnect", sid, "40", "connect");
-  await socketGet("socketAck", sid, "ack");
+  await socketPost(client, "socketConnect", sid, "40", "connect");
+  await waitForSocketConnect(client, sid);
 
   const searchPayload = `42["search",${JSON.stringify({
     username: USERNAME,
     date: Date.now(),
     token,
   })}]`;
-  await socketPost("socketSearch", sid, searchPayload, "search");
+  await socketPost(client, "socketSearch", sid, searchPayload, "search");
 
   const startedAt = Date.now();
   let pollAttempt = 0;
@@ -215,6 +279,7 @@ async function searchStories(token: string): Promise<ViewerStoryEdge[]> {
     }
 
     const packet = await socketGet(
+      client,
       "socketPoll",
       sid,
       `wait${pollAttempt}`
@@ -223,18 +288,20 @@ async function searchStories(token: string): Promise<ViewerStoryEdge[]> {
     pollAttempt++;
 
     const result = parseSearchResultPayload(packet);
-    if (!result) continue;
+    if (result) {
+      if (result.data?.status !== "success") {
+        throw new InstaStoriesViewerError(
+          "insta-stories-viewer no pudo leer las historias",
+          "socketSearchResult",
+          { status: result.data?.status }
+        );
+      }
 
-    if (result.data?.status !== "success") {
-      throw new InstaStoriesViewerError(
-        "insta-stories-viewer no pudo leer las historias",
-        "socketSearchResult",
-        { status: result.data?.status }
-      );
+      const user = result.data.user;
+      return user?.reels?.length ? user.reels : (user?.edges ?? []);
     }
 
-    const user = result.data.user;
-    return user?.reels?.length ? user.reels : (user?.edges ?? []);
+    await respondToEngineIoPackets(client, sid, packet);
   }
 
   throw new InstaStoriesViewerError(
@@ -251,13 +318,15 @@ export function buildViewerImageUrl(displayUrl: string): string {
   return `${IMG_CDN}${encodeURIComponent(displayUrl)}`;
 }
 
-export async function fetchViewerStories(): Promise<ViewerStoryEdge[]> {
+export async function fetchViewerStories(
+  client: ViewerHttpClient
+): Promise<ViewerStoryEdge[]> {
   let lastError: unknown;
 
   for (let session = 0; session < SEARCH_SESSION_RETRIES; session++) {
     try {
-      const token = await fetchConnectToken();
-      return await searchStories(token);
+      const token = await fetchConnectToken(client);
+      return await searchStories(client, token);
     } catch (error) {
       lastError = error;
 
@@ -267,7 +336,11 @@ export async function fetchViewerStories(): Promise<ViewerStoryEdge[]> {
           ? error.details.status
           : null;
 
-      if (status && isSessionExpiredStatus(status) && session < SEARCH_SESSION_RETRIES - 1) {
+      if (
+        status &&
+        isSessionExpiredStatus(status) &&
+        session < SEARCH_SESSION_RETRIES - 1
+      ) {
         await delay(SESSION_RETRY_DELAY_MS);
         continue;
       }
@@ -279,22 +352,53 @@ export async function fetchViewerStories(): Promise<ViewerStoryEdge[]> {
   throw lastError;
 }
 
-export async function downloadViewerImage(imageUrl: string): Promise<Buffer> {
-  const response = await fetch(imageUrl, {
-    cache: "no-store",
-    headers: {
-      "User-Agent": USER_AGENT,
-      Referer: `${BASE_URL}/`,
-    },
-  });
+export async function downloadViewerImage(
+  client: ViewerHttpClient,
+  imageUrl: string
+): Promise<Buffer> {
+  let lastError: unknown;
 
-  if (!response.ok) {
-    throw new InstaStoriesViewerError(
-      "No se pudo descargar la imagen del story",
-      "downloadViewerImage",
-      { status: response.status }
-    );
+  for (let attempt = 0; attempt < IMAGE_DOWNLOAD_RETRIES; attempt++) {
+    try {
+      const response = await client.fetch(imageUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(IMAGE_DOWNLOAD_TIMEOUT_MS),
+        headers: {
+          Referer: `${BASE_URL}/`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new InstaStoriesViewerError(
+          "No se pudo descargar la imagen del story",
+          "downloadViewerImage",
+          { status: response.status, attempt }
+        );
+      }
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      lastError = error;
+      if (attempt < IMAGE_DOWNLOAD_RETRIES - 1) {
+        await delay(500 * (attempt + 1));
+      }
+    }
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  const message =
+    lastError instanceof Error ? lastError.message : "Error desconocido";
+  throw new InstaStoriesViewerError(
+    message,
+    "downloadViewerImage",
+    {
+      urlLength: imageUrl.length,
+      attempts: IMAGE_DOWNLOAD_RETRIES,
+    }
+  );
+}
+
+export async function withInstagramViewer<T>(
+  fn: (client: ViewerHttpClient) => Promise<T>
+): Promise<T> {
+  return withViewerClient(fn);
 }

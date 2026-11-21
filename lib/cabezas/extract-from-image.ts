@@ -1,6 +1,11 @@
-import { decode as decodeWebp } from "@jsquash/webp";
 import Jimp from "jimp";
+import sharp from "sharp";
 import Tesseract from "tesseract.js";
+import {
+  fixNumerazoDigits,
+  pickDigits,
+  pickNumerazo,
+} from "@/lib/cabezas/parse-digits";
 import { getTesseractWorkerOptions } from "@/lib/cabezas/tesseract-config";
 
 function isWebp(buffer: Buffer): boolean {
@@ -13,8 +18,16 @@ function isWebp(buffer: Buffer): boolean {
 
 async function loadImage(buffer: Buffer): Promise<Jimp> {
   if (isWebp(buffer)) {
-    const { data, width, height } = await decodeWebp(buffer);
-    return new Jimp({ data: Buffer.from(data), width, height });
+    const { data, info } = await sharp(buffer)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    return new Jimp({
+      data: Buffer.from(data),
+      width: info.width,
+      height: info.height,
+    });
   }
 
   return Jimp.read(buffer);
@@ -41,52 +54,77 @@ const REGIONS = {
   especialInBottom: { x: 0.5, y: 0, w: 0.5, h: 0.55 },
 };
 
-function fixNumerazoDigits(digits: string): string | null {
-  if (digits.length === 4) return digits;
-  if (digits.length === 5) return digits[0] + digits[1] + digits[3] + digits[4];
-  const match = digits.match(/\d{4}/);
-  if (match) return match[0];
-  if (digits.length > 4) return digits.slice(-4);
-  return null;
-}
+const NUMERAZO_REGION_FALLBACKS = [
+  REGIONS.numerazo,
+  { x: 0.15, y: 0.38, w: 0.7, h: 0.08 },
+  { x: 0.15, y: 0.44, w: 0.7, h: 0.08 },
+];
 
-function pickDigits(text: string, length: number): string | null {
-  const parts = text.match(/\d+/g) ?? [];
-  const exact = parts.find((part) => part.length === length);
-  if (exact) return exact;
+export { fixNumerazoDigits, pickDigits, pickNumerazo };
 
-  const joined = text.replace(/\D/g, "");
-  if (joined.length === length) return joined;
-  if (joined.length > length) return joined.slice(0, length);
-  return null;
-}
-
-async function cropFromBuffer(
-  source: Buffer,
+async function cropFromImage(
+  image: Jimp,
   width: number,
   height: number,
   region: { x: number; y: number; w: number; h: number },
   resizeWidth?: number
-): Promise<Buffer> {
+): Promise<Jimp> {
   const left = Math.min(Math.round(width * region.x), Math.max(0, width - 1));
   const top = Math.min(Math.round(height * region.y), Math.max(0, height - 1));
   const cropWidth = Math.min(Math.round(width * region.w), width - left);
   const cropHeight = Math.min(Math.round(height * region.h), height - top);
 
-  const image = await loadImage(source);
-  image.crop(left, top, cropWidth, cropHeight);
+  const cropped = image
+    .clone()
+    .crop(left, top, cropWidth, cropHeight);
 
   if (resizeWidth) {
-    image.resize(resizeWidth, Jimp.AUTO);
+    cropped.resize(resizeWidth, Jimp.AUTO);
   }
 
-  return image.getBufferAsync(Jimp.MIME_PNG);
+  return cropped;
 }
 
-async function enhanceForOcr(buffer: Buffer): Promise<Buffer> {
-  const image = await loadImage(buffer);
-  image.greyscale().normalize();
-  return image.getBufferAsync(Jimp.MIME_PNG);
+async function enhanceForOcr(image: Jimp): Promise<Buffer> {
+  return image
+    .clone()
+    .greyscale()
+    .normalize()
+    .contrast(0.35)
+    .getBufferAsync(Jimp.MIME_PNG);
+}
+
+async function recognizeNumerazo(
+  worker: Tesseract.Worker,
+  normalized: Jimp,
+  targetWidth: number
+): Promise<string | null> {
+  const candidates: string[] = [];
+
+  for (const region of NUMERAZO_REGION_FALLBACKS) {
+    const crop = await cropFromImage(
+      normalized,
+      targetWidth,
+      TARGET_HEIGHT,
+      region,
+      900
+    );
+    const buffer = await enhanceForOcr(crop);
+    const result = await worker.recognize(buffer);
+    const picked = pickNumerazo(result.data.text);
+    if (picked && /^\d{4}$/.test(picked)) {
+      return picked;
+    }
+    if (picked) {
+      candidates.push(picked);
+    }
+  }
+
+  const fallback = candidates.find((value) => /^\d{4}$/.test(value));
+  if (fallback) return fallback;
+
+  const digits = candidates.join("").replace(/\D/g, "");
+  return fixNumerazoDigits(digits);
 }
 
 export async function extractCabezasFromImage(
@@ -98,64 +136,51 @@ export async function extractCabezasFromImage(
   const scale = TARGET_HEIGHT / sourceHeight;
   const targetWidth = Math.round(sourceWidth * scale);
 
-  const normalized = source
-    .clone()
-    .resize(targetWidth, TARGET_HEIGHT)
-    .getBufferAsync(Jimp.MIME_PNG);
+  const normalized = source.clone().resize(targetWidth, TARGET_HEIGHT);
 
   const worker = await Tesseract.createWorker("eng", 1, getTesseractWorkerOptions());
 
   try {
-    const normalizedBuffer = await normalized;
-
-    const numerazoBuffer = await cropFromBuffer(
-      normalizedBuffer,
-      targetWidth,
-      TARGET_HEIGHT,
-      REGIONS.numerazo,
-      900
-    ).then(enhanceForOcr);
-
-    const bottomBuffer = await cropFromBuffer(
-      normalizedBuffer,
-      targetWidth,
-      TARGET_HEIGHT,
-      REGIONS.bottom
-    );
-    const bottomImage = await loadImage(bottomBuffer);
-    const bottomWidth = bottomImage.getWidth();
-    const bottomHeight = bottomImage.getHeight();
-
-    const fijaBuffer = await cropFromBuffer(
-      bottomBuffer,
-      bottomWidth,
-      bottomHeight,
-      REGIONS.fijaInBottom,
-      500
-    ).then(enhanceForOcr);
-
-    const especialBuffer = await cropFromBuffer(
-      bottomBuffer,
-      bottomWidth,
-      bottomHeight,
-      REGIONS.especialInBottom,
-      500
-    ).then(enhanceForOcr);
-
-    const numerazoResult = await worker.recognize(numerazoBuffer);
-
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789",
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
     });
 
-    const [fijaResult, especialResult] = await Promise.all([
+    const bottomImage = await cropFromImage(
+      normalized,
+      targetWidth,
+      TARGET_HEIGHT,
+      REGIONS.bottom
+    );
+    const bottomWidth = bottomImage.getWidth();
+    const bottomHeight = bottomImage.getHeight();
+
+    const fijaBuffer = await enhanceForOcr(
+      await cropFromImage(
+        bottomImage,
+        bottomWidth,
+        bottomHeight,
+        REGIONS.fijaInBottom,
+        500
+      )
+    );
+
+    const especialBuffer = await enhanceForOcr(
+      await cropFromImage(
+        bottomImage,
+        bottomWidth,
+        bottomHeight,
+        REGIONS.especialInBottom,
+        500
+      )
+    );
+
+    const [numerazo, fijaResult, especialResult] = await Promise.all([
+      recognizeNumerazo(worker, normalized, targetWidth),
       worker.recognize(fijaBuffer),
       worker.recognize(especialBuffer),
     ]);
 
-    const numerazoDigits = numerazoResult.data.text.replace(/\D/g, "");
-    const numerazo = fixNumerazoDigits(numerazoDigits);
     const laFija = pickDigits(fijaResult.data.text, 3);
     const elEspecial = pickDigits(especialResult.data.text, 2);
 

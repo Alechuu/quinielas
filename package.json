@@ -7,14 +7,15 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
+    "test": "tsx --test lib/cabezas/**/*.test.ts",
     "test:cabezas": "tsx scripts/test-cabezas-sync.ts",
     "test:alert": "tsx scripts/test-ntfy-alert.ts"
   },
   "dependencies": {
     "@fontsource/dseg7-classic": "^5.2.5",
-    "@jsquash/webp": "^1.5.0",
     "@radix-ui/react-slot": "1.1.1",
     "@vercel/analytics": "1.3.1",
+    "@vercel/kv": "^3.0.0",
     "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -23,6 +24,7 @@
     "next": "16.0.10",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "sharp": "^0.35.5",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0"
@@ -34,8 +36,8 @@
     "@types/react-dom": "^19",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
-    "tw-animate-css": "1.3.3",
     "tsx": "^4.20.5",
+    "tw-animate-css": "1.3.3",
     "typescript": "^5"
   },
   "pnpm": {
