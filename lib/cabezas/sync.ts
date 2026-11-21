@@ -4,10 +4,15 @@ import {
   isUnixTimestampOnArgentinaDay,
 } from "@/lib/cabezas/date";
 import {
+  createCabezasOcrWorker,
   extractCabezasFromImage,
   isValidExtraction,
   type ValidatedCabezas,
 } from "@/lib/cabezas/extract-from-image";
+import {
+  formatErrorMessage,
+  serializeError,
+} from "@/lib/cabezas/error-details";
 import {
   buildViewerImageUrl,
   downloadViewerImage,
@@ -74,6 +79,7 @@ function buildSyncError(
   if (options?.cause instanceof Error) {
     details.errorName = options.cause.name;
     details.stack = options.cause.stack;
+    details.errorCause = serializeError(options.cause);
   }
 
   if (options?.cause instanceof InstaStoriesViewerError) {
@@ -166,38 +172,48 @@ async function findActiveCabezasStory(): Promise<
         }))
         .sort((a, b) => b.takenAt - a.takenAt);
 
-      for (const story of activeStories) {
-        try {
-          const imageBuffer = await downloadViewerImage(client, story.imageUrl);
-          const extracted = await extractCabezasFromImage(imageBuffer);
-          const valid = isValidExtraction(extracted);
+      const worker = await createCabezasOcrWorker();
 
-          storyAttempts.push({
-            takenAt: story.takenAt,
-            valid,
-            extracted,
-          });
+      try {
+        for (const story of activeStories) {
+          try {
+            const imageBuffer = await downloadViewerImage(
+              client,
+              story.imageUrl
+            );
+            const extracted = await extractCabezasFromImage(imageBuffer, worker);
+            const valid = isValidExtraction(extracted);
 
-          if (valid) {
-            return {
-              ok: true as const,
-              story: { ...story, extracted },
-              diagnostics: {
-                totalStories,
-                activeStories: activeStories.length,
-                attemptedStories: storyAttempts.length,
-                storyAttempts,
-              },
-            };
+            storyAttempts.push({
+              takenAt: story.takenAt,
+              valid,
+              extracted,
+            });
+
+            if (valid) {
+              return {
+                ok: true as const,
+                story: { ...story, extracted },
+                diagnostics: {
+                  totalStories,
+                  activeStories: activeStories.length,
+                  attemptedStories: storyAttempts.length,
+                  storyAttempts,
+                },
+              };
+            }
+          } catch (error) {
+            storyAttempts.push({
+              takenAt: story.takenAt,
+              valid: false,
+              extracted: null,
+              error: formatErrorMessage(error),
+              errorCause: serializeError(error),
+            });
           }
-        } catch (error) {
-          storyAttempts.push({
-            takenAt: story.takenAt,
-            valid: false,
-            extracted: null,
-            error: error instanceof Error ? error.message : "Error desconocido",
-          });
         }
+      } finally {
+        await worker.terminate();
       }
 
       return {
@@ -282,10 +298,9 @@ export async function syncCabezasFromInstagram(options?: {
       await writeCabezas(pending);
 
       if (result.cause) {
-        const message =
-          result.cause instanceof Error
-            ? result.cause.message
-            : "Error al sincronizar desde Instagram";
+        const message = formatErrorMessage(
+          result.cause ?? "Error al sincronizar desde Instagram"
+        );
 
         return {
           ok: false,
@@ -353,10 +368,9 @@ export async function syncCabezasFromInstagram(options?: {
       extracted,
     };
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Error al sincronizar desde Instagram";
+    const message = formatErrorMessage(
+      error ?? "Error al sincronizar desde Instagram"
+    );
 
     const failed: CabezasData = {
       ...current,
@@ -388,6 +402,4 @@ export async function syncCabezasFromInstagram(options?: {
   }
 }
 
-export async function getCabezasState(): Promise<CabezasData> {
-  return readCabezas();
-}
+export { getCabezasState } from "@/lib/cabezas/state";

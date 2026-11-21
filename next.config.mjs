@@ -2,6 +2,7 @@
 const tesseractRuntimeDeps = [
   "./node_modules/tesseract.js/**/*",
   "./node_modules/tesseract.js-core/**/*",
+  "./node_modules/@tesseract.js-data/**/*",
   "./node_modules/bmp-js/**/*",
   "./node_modules/idb-keyval/**/*",
   "./node_modules/wasm-feature-detect/**/*",
@@ -9,6 +10,8 @@ const tesseractRuntimeDeps = [
   "./node_modules/is-url/**/*",
   "./node_modules/zlibjs/**/*",
   "./node_modules/node-fetch/**/*",
+  "./node_modules/sharp/**/*",
+  "./node_modules/@img/**/*",
 ];
 
 const nextConfig = {
@@ -23,7 +26,6 @@ const nextConfig = {
     "tesseract.js-core",
     "bmp-js",
     "wasm-feature-detect",
-    "sharp",
   ],
   outputFileTracingIncludes: {
     "/api/cabezas": tesseractRuntimeDeps,

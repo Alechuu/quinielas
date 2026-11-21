@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { getCabezasState, syncCabezasFromInstagram } from "@/lib/cabezas/sync";
 import { writeCabezas } from "@/lib/cabezas/storage";
+import { getCabezasState } from "@/lib/cabezas/state";
 import {
   notifyApiFailure,
   shouldNotifyCabezasSync,
 } from "@/lib/alerts/notify-api-failure";
+import {
+  formatErrorMessage,
+  serializeError,
+} from "@/lib/cabezas/error-details";
 import type { CabezasData, CabezasSyncError } from "@/lib/cabezas/types";
 
 export const runtime = "nodejs";
@@ -19,41 +23,52 @@ function fallbackSyncError(message: string): CabezasSyncError {
 }
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const shouldSync = url.searchParams.get("sync") === "1";
+  try {
+    const url = new URL(request.url);
+    const shouldSync = url.searchParams.get("sync") === "1";
 
-  if (shouldSync) {
-    const force = url.searchParams.get("force") === "1";
-    const result = await syncCabezasFromInstagram({ force });
-    if (result.ok && result.data) {
+    if (shouldSync) {
+      const { syncCabezasFromInstagram } = await import("@/lib/cabezas/sync");
+      const force = url.searchParams.get("force") === "1";
+      const result = await syncCabezasFromInstagram({ force });
+      if (result.ok && result.data) {
+        return NextResponse.json({
+          ...result.data,
+          syncOk: true,
+          extracted: result.extracted,
+        });
+      }
+
+      const syncError =
+        result.error ?? fallbackSyncError("No se pudo sincronizar");
+      if (shouldNotifyCabezasSync(syncError.code)) {
+        const detail = [syncError.message, syncError.step]
+          .filter(Boolean)
+          .join(" · ");
+        notifyApiFailure("cabezas", detail);
+      }
+
+      const fallback = await getCabezasState();
       return NextResponse.json({
-        ...result.data,
-        syncOk: true,
+        ...fallback,
+        syncOk: false,
+        syncError,
         extracted: result.extracted,
+        cached: result.cached ?? false,
       });
     }
 
-    const syncError =
-      result.error ?? fallbackSyncError("No se pudo sincronizar");
-    if (shouldNotifyCabezasSync(syncError.code)) {
-      const detail = [syncError.message, syncError.step]
-        .filter(Boolean)
-        .join(" · ");
-      notifyApiFailure("cabezas", detail);
-    }
-
-    const fallback = await getCabezasState();
-    return NextResponse.json({
-      ...fallback,
-      syncOk: false,
-      syncError,
-      extracted: result.extracted,
-      cached: result.cached ?? false,
-    });
+    const data = await getCabezasState();
+    return NextResponse.json(data);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: formatErrorMessage(error),
+        errorCause: serializeError(error),
+      },
+      { status: 500 }
+    );
   }
-
-  const data = await getCabezasState();
-  return NextResponse.json(data);
 }
 
 export async function POST(request: Request) {
@@ -74,7 +89,14 @@ export async function POST(request: Request) {
 
     await writeCabezas(data);
     return NextResponse.json(data);
-  } catch {
-    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "Datos inválidos",
+        details: formatErrorMessage(error),
+        errorCause: serializeError(error),
+      },
+      { status: 400 }
+    );
   }
 }
