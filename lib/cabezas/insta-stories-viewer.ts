@@ -1,4 +1,8 @@
 import {
+  formatErrorMessage,
+  serializeError,
+} from "@/lib/cabezas/error-details";
+import {
   VIEWER_USER_AGENT,
   ViewerHttpClient,
   withViewerClient,
@@ -385,14 +389,13 @@ export async function downloadViewerImage(
     }
   }
 
-  const message =
-    lastError instanceof Error ? lastError.message : "Error desconocido";
   throw new InstaStoriesViewerError(
-    message,
+    formatErrorMessage(lastError),
     "downloadViewerImage",
     {
       urlLength: imageUrl.length,
       attempts: IMAGE_DOWNLOAD_RETRIES,
+      errorCause: serializeError(lastError),
     }
   );
 }

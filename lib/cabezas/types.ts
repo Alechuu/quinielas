@@ -28,6 +28,7 @@ export interface CabezasStoryAttempt {
     elEspecial: string | null;
   } | null;
   error?: string;
+  errorCause?: unknown;
 }
 
 export interface CabezasSyncError {

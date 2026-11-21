@@ -1,5 +1,4 @@
 import Jimp from "jimp";
-import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import {
   fixNumerazoDigits,
@@ -7,6 +6,7 @@ import {
   pickNumerazo,
 } from "@/lib/cabezas/parse-digits";
 import { getTesseractWorkerOptions } from "@/lib/cabezas/tesseract-config";
+import { formatErrorMessage } from "@/lib/cabezas/error-details";
 
 function isWebp(buffer: Buffer): boolean {
   return (
@@ -18,6 +18,7 @@ function isWebp(buffer: Buffer): boolean {
 
 async function loadImage(buffer: Buffer): Promise<Jimp> {
   if (isWebp(buffer)) {
+    const { default: sharp } = await import("sharp");
     const { data, info } = await sharp(buffer)
       .ensureAlpha()
       .raw()
@@ -74,9 +75,7 @@ async function cropFromImage(
   const cropWidth = Math.min(Math.round(width * region.w), width - left);
   const cropHeight = Math.min(Math.round(height * region.h), height - top);
 
-  const cropped = image
-    .clone()
-    .crop(left, top, cropWidth, cropHeight);
+  const cropped = image.clone().crop(left, top, cropWidth, cropHeight);
 
   if (resizeWidth) {
     cropped.resize(resizeWidth, Jimp.AUTO);
@@ -127,24 +126,45 @@ async function recognizeNumerazo(
   return fixNumerazoDigits(digits);
 }
 
-export async function extractCabezasFromImage(
-  imageBuffer: Buffer
-): Promise<ExtractedCabezas> {
-  const source = await loadImage(imageBuffer);
-  const sourceWidth = source.getWidth();
-  const sourceHeight = source.getHeight();
-  const scale = TARGET_HEIGHT / sourceHeight;
-  const targetWidth = Math.round(sourceWidth * scale);
-
-  const normalized = source.clone().resize(targetWidth, TARGET_HEIGHT);
-
-  const worker = await Tesseract.createWorker("eng", 1, getTesseractWorkerOptions());
-
+export async function createCabezasOcrWorker(): Promise<Tesseract.Worker> {
   try {
+    const worker = await Tesseract.createWorker(
+      "eng",
+      1,
+      getTesseractWorkerOptions()
+    );
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789",
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
     });
+    return worker;
+  } catch (error) {
+    throw new Error(
+      `No se pudo iniciar OCR de cabezas: ${formatErrorMessage(error)}`,
+      { cause: error }
+    );
+  }
+}
+
+export async function extractCabezasFromImage(
+  imageBuffer: Buffer,
+  worker?: Tesseract.Worker
+): Promise<ExtractedCabezas> {
+  let ownsWorker = false;
+  let activeWorker = worker;
+
+  if (!activeWorker) {
+    activeWorker = await createCabezasOcrWorker();
+    ownsWorker = true;
+  }
+
+  try {
+    const source = await loadImage(imageBuffer);
+    const sourceWidth = source.getWidth();
+    const sourceHeight = source.getHeight();
+    const scale = TARGET_HEIGHT / sourceHeight;
+    const targetWidth = Math.round(sourceWidth * scale);
+    const normalized = source.clone().resize(targetWidth, TARGET_HEIGHT);
 
     const bottomImage = await cropFromImage(
       normalized,
@@ -176,17 +196,23 @@ export async function extractCabezasFromImage(
     );
 
     const [numerazo, fijaResult, especialResult] = await Promise.all([
-      recognizeNumerazo(worker, normalized, targetWidth),
-      worker.recognize(fijaBuffer),
-      worker.recognize(especialBuffer),
+      recognizeNumerazo(activeWorker, normalized, targetWidth),
+      activeWorker.recognize(fijaBuffer),
+      activeWorker.recognize(especialBuffer),
     ]);
 
     const laFija = pickDigits(fijaResult.data.text, 3);
     const elEspecial = pickDigits(especialResult.data.text, 2);
 
     return { numerazo, laFija, elEspecial };
+  } catch (error) {
+    throw new Error(`No se pudo extraer cabezas: ${formatErrorMessage(error)}`, {
+      cause: error,
+    });
   } finally {
-    await worker.terminate();
+    if (ownsWorker && activeWorker) {
+      await activeWorker.terminate();
+    }
   }
 }
 
