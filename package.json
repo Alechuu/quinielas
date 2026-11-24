@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "test": "tsx --test lib/cabezas/**/*.test.ts",
+    "test": "tsx --test lib/cabezas/**/*.test.ts lib/quiniela/**/*.test.ts",
     "test:cabezas": "tsx scripts/test-cabezas-sync.ts",
     "test:alert": "tsx scripts/test-ntfy-alert.ts"
   },

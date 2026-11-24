@@ -1,27 +1,22 @@
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import { notifyApiFailure } from "@/lib/alerts/notify-api-failure";
+import { fetchDejugadasCabezas } from "@/lib/quiniela/dejugadas";
+import { mergeParsedDataFromFallback } from "@/lib/quiniela/merge";
 import { notitimbaFetch } from "@/lib/quiniela/notitimba-fetch";
+import {
+  emptyParsedData,
+  isQuinielaNumber,
+  parsedDataHasValues,
+  SORTEO_ORDER,
+  type ParsedData,
+  type ProvinciaKeyInternal,
+  type SorteoKeyInternal,
+} from "@/lib/quiniela/types";
 
 /* =========================
    TYPES
 ========================= */
-
-// Internal keys used during parsing
-type ProvinciaKeyInternal =
-  | "provincia"
-  | "ciudad"
-  | "cordoba"
-  | "santa_fe"
-  | "entre_rios"
-  | "montevideo";
-
-type SorteoKeyInternal =
-  | "previa"
-  | "primero"
-  | "matutina"
-  | "vespertina"
-  | "nocturna";
 
 // Keys expected by the table component
 type ProvinciaKeyTable =
@@ -82,15 +77,6 @@ const SORTEO_TO_TABLE: Record<SorteoKeyInternal, SorteoKeyTable> = {
   vespertina: "Vespertina",
   nocturna: "Nocturna",
 };
-
-// Order of sorteos as they appear in HTML
-const SORTEO_ORDER: SorteoKeyInternal[] = [
-  "previa",
-  "primero",
-  "matutina",
-  "vespertina",
-  "nocturna",
-];
 
 // Expected sorteo completion times (Argentina time) + 15-min grace period
 // Previa ~10:15, Primero ~12:00, Matutina ~15:00, Vespertina ~18:00, Nocturna ~21:00
@@ -233,33 +219,6 @@ async function fetchNotitimbaData(): Promise<NotitimbaFetchResult> {
 }
 
 /* =========================
-   PARSER - Internal format
-========================= */
-
-type ParsedData = {
-  [sorteo in SorteoKeyInternal]: {
-    [provincia in ProvinciaKeyInternal]?: string;
-  };
-};
-
-function emptyParsedData(): ParsedData {
-  return {
-    previa: {},
-    primero: {},
-    matutina: {},
-    vespertina: {},
-    nocturna: {},
-  };
-}
-
-function parsedDataHasValues(data: ParsedData): boolean {
-  for (const sorteo of Object.values(data)) {
-    if (Object.keys(sorteo).length > 0) return true;
-  }
-  return false;
-}
-
-/* =========================
    NOTITIMBA PARSER
 ========================= */
 
@@ -280,11 +239,6 @@ function matchNotitimbaProvince(text: string): ProvinciaKeyInternal | null {
   if (t.includes("entre r")) return "entre_rios";
   if (t.includes("montevideo")) return "montevideo";
   return null;
-}
-
-// Santa Fe's Saturday nocturna is 5 digits (for example 32210). Other draws are 4.
-function isQuinielaNumber(text: string): boolean {
-  return /^\d{4,5}$/.test(text);
 }
 
 // Check if a sorteo should have completed by now (past its time + 15-min grace)
@@ -488,9 +442,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const dataHoy = parseNotitimbaResponse(ajaxHtml);
+    const dataHoyNotitimba = parseNotitimbaResponse(ajaxHtml);
 
-    if (!parsedDataHasValues(dataHoy)) {
+    if (!parsedDataHasValues(dataHoyNotitimba)) {
       notifyApiFailure(
         "quiniela",
         "Notitimba: respuesta sin tablas qTbl (¿cambió el HTML/API?)"
@@ -500,6 +454,12 @@ export async function GET(request: Request) {
         { status: 502 }
       );
     }
+
+    const dejugadasHoy = await fetchDejugadasCabezas(getDateString(now));
+    const dataHoy =
+      dejugadasHoy != null
+        ? mergeParsedDataFromFallback(dataHoyNotitimba, dejugadasHoy)
+        : dataHoyNotitimba;
 
     const dataAyer = emptyParsedData();
     const nocturnaAyer = parseNotitimbaNocturnaAyer(staticHtml, now);
